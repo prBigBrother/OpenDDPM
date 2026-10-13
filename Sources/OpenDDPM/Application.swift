@@ -38,10 +38,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.showPresetsMenu() }
         }
         if !store.configured || CommandLine.arguments.contains("--show-window") { showWindow() }
-        if store.dependencyInstalled {
-            store.startBetterDisplay()
-            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); store.refresh() }
-        }
+        store.refresh()
     }
     func updateMenu() {
         let menu = NSMenu()
@@ -50,7 +47,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         for preset in store.configuration.presets {
             let hidden = store.configuration.keepLocalVisible && !preset.includes(store.configuration.localInput)
-            let item = NSMenuItem(title: preset.name + "  ·  " + preset.detail + (hidden ? "  🔒" : ""), action: #selector(applyPreset(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: preset.name + "  ·  " + preset.detail + (preset.shortcut.map { "  \($0.display)" } ?? "") + (hidden ? "  🔒" : ""), action: #selector(applyPreset(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = preset.id.uuidString
             item.isEnabled = !store.busy && !hidden && store.configured
             if store.lastPresetID == preset.id { item.state = .on }
@@ -98,9 +95,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 struct OpenDDPMApplication {
     @MainActor static func main() {
         if CommandLine.arguments.contains("--diagnose") {
-            let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/betterdisplaycli")
+            let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/openddpm-ddc")
             do {
-                let output = try HelperRunner(executable: helper).run(["get", "-identifiers", "-type=Display"])
+                let output = try HelperRunner(executable: helper).run(["list"])
                 let monitors = try ConnectedMonitor.decode(output)
                 print("Bundled helper OK. Found \(monitors.count) monitor(s).")
                 for monitor in monitors { print("\(monitor.name): \(monitor.serial)") }

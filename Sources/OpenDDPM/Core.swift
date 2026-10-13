@@ -26,6 +26,7 @@ struct DisplayPreset: Codable, Identifiable, Equatable {
     var layout: SplitLayout
     var main: VideoInput
     var secondary: VideoInput
+    var shortcut: PresetShortcut? = nil
     func includes(_ input: VideoInput) -> Bool { main == input || (layout != .full && secondary == input) }
     var detail: String { layout == .full ? main.title : "\(main.short) + \(secondary.short) · \(layout.title)" }
     func validate() throws {
@@ -55,6 +56,9 @@ struct AppConfiguration: Codable {
         guard !monitorSerial.contains("\n"), monitorSerial.count < 200, presets.count <= 100 else { throw ControlError.message("Invalid monitor or preset data.") }
         guard Set(presets.map(\.id)).count == presets.count else { throw ControlError.message("Preset IDs must be unique.") }
         for preset in presets { try preset.validate() }
+        let shortcuts = presets.compactMap(\.shortcut)
+        for shortcut in shortcuts { try shortcut.validate() }
+        guard Set(shortcuts.map(\.identity)).count == shortcuts.count else { throw ControlError.message("Two presets cannot use the same hotkey.") }
     }
 }
 
@@ -64,13 +68,11 @@ struct ConnectedMonitor: Identifiable, Equatable {
     var model: String
     var id: String { serial }
     static func decode(_ text: String) throws -> [Self] {
-        // BetterDisplay returns comma-separated JSON objects, rather than a JSON array.
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let json = trimmed.hasPrefix("[") ? trimmed : "[" + trimmed + "]"
-        guard let rows = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] else { throw ControlError.message("Unexpected monitor list from BetterDisplay.") }
+        guard let rows = try JSONSerialization.jsonObject(with: Data(trimmed.utf8)) as? [[String: Any]] else { throw ControlError.message("Unexpected monitor list from native DDC.") }
         return rows.compactMap { row in
-            guard row["deviceType"] as? String == "Display", let serial = row["alphanumericSerial"] as? String, !serial.isEmpty else { return nil }
-            return Self(serial: serial, name: row["name"] as? String ?? "Monitor", model: row["productName"] as? String ?? "")
+            guard let serial = row["serial"] as? String, !serial.isEmpty else { return nil }
+            return Self(serial: serial, name: row["name"] as? String ?? "Monitor", model: row["model"] as? String ?? "")
         }
     }
 }
@@ -134,7 +136,7 @@ struct HelperRunner {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        do { try process.run() } catch { throw ControlError.message("The bundled BetterDisplay CLI helper could not start: \(error.localizedDescription)") }
+        do { try process.run() } catch { throw ControlError.message("The built-in monitor driver could not start: \(error.localizedDescription)") }
         let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: timeout)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -142,7 +144,7 @@ struct HelperRunner {
         timeout.cancel()
         let output = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !output.hasPrefix("Failed.") else {
-            throw ControlError.message(output.isEmpty ? "BetterDisplay did not respond. Start BetterDisplay and enable CLI / notification integration in its settings." : output)
+            throw ControlError.message(output.isEmpty ? "The monitor did not respond. Check its cable and enable DDC/CI in the monitor menu." : output)
         }
         return output
     }
@@ -151,12 +153,12 @@ struct HelperRunner {
 actor MonitorEngine {
     let runner: HelperRunner
     init(helper: URL) { runner = HelperRunner(executable: helper) }
-    func discover() throws -> [ConnectedMonitor] { try ConnectedMonitor.decode(runner.run(["get", "-identifiers", "-type=Display"])) }
+    func discover() throws -> [ConnectedMonitor] { try ConnectedMonitor.decode(runner.run(["list"])) }
     func read(_ register: Int, serial: String) async throws -> Int {
         var lastError: Error = ControlError.message("Monitor unavailable.")
         for attempt in 0..<10 {
             do {
-                let text = try runner.run(["get", "-alphanumericSerial=\(serial)", "-ddc", String(format: "-vcp=0x%02X", register)])
+                let text = try runner.run(["read", serial, String(format: "0x%02X", register)])
                 guard let value = Int(text), RegisterValue.isValid(value, register: register) else { throw ControlError.message("Monitor is still reconnecting; unexpected register response: \(text)") }
                 return value
             } catch { lastError = error }
@@ -175,7 +177,7 @@ actor MonitorEngine {
         var lastError: Error = ControlError.message("Monitor unavailable.")
         for attempt in 0..<10 {
             do {
-                _ = try runner.run(["set", "-alphanumericSerial=\(serial)", String(format: "-vcp=0x%02X", action.register), String(format: "-ddc=0x%02X", action.value)])
+                _ = try runner.run(["write", serial, String(format: "0x%02X", action.register), String(format: "0x%02X", action.value)])
                 return
             } catch { lastError = error }
             if attempt < 9 { try await Task.sleep(nanoseconds: 1_000_000_000) }

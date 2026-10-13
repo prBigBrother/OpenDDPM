@@ -12,9 +12,10 @@ struct CoreTests {
     }
     static func main() throws {
         let fixtures = """
-        {"deviceType":"Display","alphanumericSerial":"DEMO01","name":"DELL U4025QW"},
-        {"deviceType":"VirtualScreen","name":"Virtual"},
-        {"deviceType":"Display","name":"No identifier"}
+        [
+        {"serial":"DEMO01","name":"DELL U4025QW","model":"DELL U4025QW"},
+        {"name":"No identifier"}
+        ]
         """
         let discovered = try ConnectedMonitor.decode(fixtures)
         check(discovered.count == 1 && discovered[0].serial == "DEMO01", "Discovery filters virtual and unidentifiable displays")
@@ -75,6 +76,26 @@ struct CoreTests {
         check(!RegisterValue.isValid(5, register: 0xe9), "Unexpected mode replies must be retried")
         check(RegisterValue.isValid(0x0f19, register: 0x60), "Main source masks the local connection byte")
         check(RegisterValue.isValid(0x0f, register: 0xe8), "Valid secondary input accepted")
+        let shortcut = PresetShortcut(keyCode: 18, modifiers: PresetShortcut.control | PresetShortcut.option, keyLabel: "1")
+        try shortcut.validate()
+        check(shortcut.display == "⌃⌥1", "Hotkey presentation uses the correct macOS modifier glyphs")
+        expectError("Unmodified hotkeys rejected") { try PresetShortcut(keyCode: 18, modifiers: 0, keyLabel: "1").validate() }
+        expectError("Escape cannot be bound") { try PresetShortcut(keyCode: 53, modifiers: PresetShortcut.command, keyLabel: "Escape").validate() }
+        expectError("Application quit shortcut cannot be rebound") { try PresetShortcut(keyCode: 12, modifiers: PresetShortcut.command, keyLabel: "Q").validate() }
+        var bindings = AppConfiguration()
+        bindings.presets[0].shortcut = shortcut
+        bindings.presets[1].shortcut = shortcut
+        expectError("Duplicate hotkeys rejected") { try bindings.validate() }
+        bindings.presets[1].shortcut = nil
+        try ConfigurationFile.save(bindings, to: path)
+        let restoredBindings = try ConfigurationFile.load(path)
+        check(restoredBindings.presets[0].shortcut == shortcut, "Bindings persist with presets")
+        let legacyData = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppConfiguration())) as! [String: Any]
+        var legacy = legacyData
+        legacy["presets"] = (legacy["presets"] as! [[String: Any]]).map { row in var result = row; result.removeValue(forKey: "shortcut"); return result }
+        try JSONSerialization.data(withJSONObject: legacy).write(to: path)
+        let upgraded = try ConfigurationFile.load(path)
+        check(upgraded.presets.allSatisfy { $0.shortcut == nil }, "Version 0.1 configuration upgrades without losing presets")
         print("PASS: \(count) core assertions")
     }
 }

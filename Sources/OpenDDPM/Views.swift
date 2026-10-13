@@ -51,7 +51,8 @@ struct ConfigurationView: View {
                 }.padding(.bottom, 30).padding(.top, 8)
                 navigation("setup", "Monitor & inputs", "display")
                 navigation("presets", "Presets", "rectangle.split.2x1")
-                navigation("about", "About & dependencies", "info.circle")
+                navigation("hotkeys", "Hotkeys", "command")
+                navigation("about", "About OpenDDPM", "info.circle")
                 Spacer()
                 VStack(alignment: .leading, spacing: 7) {
                     Label(store.configured ? store.configuration.monitorName : "Setup required", systemImage: store.configured ? "checkmark.circle.fill" : "circle.dashed").font(.caption.bold()).foregroundStyle(accent)
@@ -65,6 +66,7 @@ struct ConfigurationView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         if store.selectedPage == "setup" { SetupView(store: store) }
                         else if store.selectedPage == "presets" { PresetsView(store: store) }
+                        else if store.selectedPage == "hotkeys" { HotkeysView(store: store) }
                         else { AboutView(store: store) }
                     }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -95,18 +97,7 @@ private struct SetupView: View {
     @ObservedObject var store: AppStore
     var body: some View {
         title("Make it yours", subtitle: "Connect a monitor, then tell OpenDDPM which input belongs to this Mac.")
-        section("1", "Connect BetterDisplay") {
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Label(store.dependencyInstalled ? "BetterDisplay found" : "BetterDisplay is required", systemImage: store.dependencyInstalled ? "checkmark.circle.fill" : "arrow.down.app").foregroundStyle(store.dependencyInstalled ? accent : .orange)
-                    Text("The CLI helper is bundled. The BetterDisplay app supplies monitor communication.").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if store.dependencyInstalled { Button("Start BetterDisplay") { store.startBetterDisplay() } }
-                else { Button("Get BetterDisplay") { NSWorkspace.shared.open(URL(string: "https://betterdisplay.pro")!) } }
-            }
-        }
-        section("2", "Choose your monitor") {
+        section("1", "Choose your monitor") {
             HStack {
                 if store.monitors.isEmpty { Text("No monitors discovered yet").foregroundStyle(.secondary) }
                 else {
@@ -115,12 +106,12 @@ private struct SetupView: View {
                     }.labelsHidden().frame(maxWidth: 390)
                 }
                 Spacer()
-                Button("Discover") { store.refresh() }.disabled(store.busy || !store.dependencyInstalled).accessibilityIdentifier("discover")
+                Button("Discover") { store.refresh() }.disabled(store.busy).accessibilityIdentifier("discover")
             }
             if let status = store.status { Text("Now showing: \(status.description)").font(.caption).foregroundStyle(.secondary) }
             Text("Designed and tested for Dell U4025QW. DDC/CI must be enabled in the monitor’s on-screen menu.").font(.caption).foregroundStyle(.secondary)
         }
-        section("3", "Identify this Mac’s input") {
+        section("2", "Identify this Mac’s input") {
             HStack(spacing: 10) {
                 ForEach(VideoInput.allCases) { input in
                     Button { store.configuration.localInput = input; store.configuration.inputConfirmed = false } label: {
@@ -217,6 +208,34 @@ private struct PresetEditor: View {
     }
 }
 
+private struct HotkeysView: View {
+    @ObservedObject var store: AppStore
+    var body: some View {
+        title("Your workspace, at a keystroke.", subtitle: "Bind a global shortcut to any preset. It works while another app is focused.")
+        Text("Click Record, then press a key with Control, Option, or Command. Escape cancels.").font(.callout).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            ForEach(store.configuration.presets) { preset in
+                let blocked = store.configuration.keepLocalVisible && !preset.includes(store.configuration.localInput)
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(preset.name).font(.headline)
+                        Text(preset.detail).font(.caption).foregroundStyle(.secondary)
+                        if let issue = store.hotkeyIssues[preset.id] { Text(issue).font(.caption).foregroundStyle(.orange) }
+                        else if blocked { Text("Inactive: this preset hides this Mac").font(.caption).foregroundStyle(.secondary) }
+                        else if !store.configured { Text("Complete monitor setup to activate").font(.caption).foregroundStyle(.secondary) }
+                        else if preset.shortcut != nil { Text("Active globally").font(.caption).foregroundStyle(accent) }
+                    }
+                    Spacer()
+                    ShortcutRecorder(preset: preset, capture: { store.setShortcut($0, for: preset.id) }, recordingChanged: { store.shortcutRecording($0) }).frame(width: 145, height: 28)
+                    Button { store.setShortcut(nil, for: preset.id) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).disabled(preset.shortcut == nil).help("Clear this hotkey")
+                }.padding(18)
+                if preset.id != store.configuration.presets.last?.id { Divider().padding(.horizontal, 18) }
+            }
+        }.background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 13)).overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Color.white.opacity(0.07))).disabled(store.busy)
+        Label("No Accessibility or Input Monitoring permission is needed.", systemImage: "checkmark.shield").font(.caption).foregroundStyle(.secondary)
+    }
+}
+
 private struct AboutView: View {
     @ObservedObject var store: AppStore
     var body: some View {
@@ -225,13 +244,10 @@ private struct AboutView: View {
             Text("Pick a preset from the menu bar, or create one here. Layout changes use the monitor’s own Picture-by-Picture and Picture-in-Picture controls.").foregroundStyle(.secondary)
             Toggle("Launch OpenDDPM at login", isOn: Binding(get: { store.loginEnabled }, set: { store.toggleLogin($0) }))
         }
-        section("", "Dependencies & portability") {
-            Label("betterdisplaycli is bundled", systemImage: "shippingbox.fill").foregroundStyle(accent)
-            Text("The MIT-licensed CLI helper by waydabber is included in the app. BetterDisplay 2.2 or newer must be installed and running with notification integration enabled. No Python, Homebrew, or Terminal setup is required to use OpenDDPM.").font(.callout).foregroundStyle(.secondary)
-            HStack {
-                Link("BetterDisplay website ↗", destination: URL(string: "https://betterdisplay.pro")!)
-                Link("CLI license ↗", destination: URL(string: "https://github.com/waydabber/betterdisplaycli/blob/main/LICENSE")!)
-            }
+        section("", "Built-in monitor control") {
+            Label("Standalone native DDC/CI driver", systemImage: "cable.connector").foregroundStyle(accent)
+            Text("OpenDDPM communicates directly with the monitor using macOS IOKit. No external monitor-control application, CLI installation, Python, or Homebrew is required.").font(.callout).foregroundStyle(.secondary)
+            Text("Apple Silicon uses IOAVService; Intel uses the I2C framebuffer interface. Enable DDC/CI in the monitor’s own menu.").font(.caption).foregroundStyle(.secondary)
             Text("Universal app for Apple Silicon and Intel · macOS 13 or newer").font(.caption).foregroundStyle(.secondary)
         }
         section("", "Open source") {
@@ -239,7 +255,7 @@ private struct AboutView: View {
                 Link("GitHub repository ↗", destination: URL(string: "https://github.com/prBigBrother/OpenDDPM")!)
                 Link("Download releases ↗", destination: URL(string: "https://github.com/prBigBrother/OpenDDPM/releases")!)
             }
-            Text("Independent software. Not affiliated with Dell or BetterDisplay. Monitor support is currently validated on the U4025QW.").font(.caption).foregroundStyle(.secondary)
+            Text("Independent software. Not affiliated with Dell. Monitor support is currently validated on the U4025QW.").font(.caption).foregroundStyle(.secondary)
         }
     }
 }

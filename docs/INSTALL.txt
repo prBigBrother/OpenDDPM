@@ -1,25 +1,28 @@
-OpenDDPM 0.1.0
+OpenDDPM 0.2.0
 
 1. Drag OpenDDPM.app to Applications.
-2. Install and start BetterDisplay 2.2 or newer: https://betterdisplay.pro
-   The BetterDisplay CLI helper is already included in OpenDDPM.
-   Enable CLI / notification integration in BetterDisplay if you disabled it.
-3. Open OpenDDPM. Look for the split-monitor icon in the menu bar.
-4. Discover your monitor, select the cable used by this Mac (DP, HDMI, or
+2. Open OpenDDPM. Look for the split-monitor icon in the menu bar.
+3. Discover your monitor, select the cable used by this Mac (DP, HDMI, or
    Thunderbolt), and confirm it. Setup does not switch the display.
-5. Apply or create presets in the configuration window or menu bar.
+4. Apply or create presets in the configuration window or menu bar.
+5. Open Hotkeys to record a global shortcut for each preset. Use Command,
+   Control, or Option with a key. Escape cancels; Clear removes a binding.
 
+No other monitor-control app is required. The native DDC/CI helper is included.
 Requirements: macOS 13+, Apple Silicon or Intel, supported Dell monitor with
-DDC/CI enabled. U4025QW is the model validated for this first release.
+DDC/CI enabled. U4025QW is the hardware-validated model on Apple Silicon.
+The Intel driver is compiled but has not been tested on physical Intel hardware.
 
-This initial build is ad-hoc signed, not Apple notarized. On a downloaded copy,
+This build is ad-hoc signed, not Apple notarized. On a downloaded copy,
 macOS may block first launch. Attempt to open it, then use System Settings >
 Privacy & Security > Open Anyway and confirm. Do not disable Gatekeeper.
 
 Keep this Mac visible is enabled by default. Presets that exclude your confirmed
-input are blocked until you turn that setting off. Switching back after hiding
-this Mac can require the monitor joystick or a separate USB control connection.
+input and their hotkeys are blocked until you turn that setting off. Switching
+back after hiding this Mac can require the monitor joystick or a separate
+USB control connection. Shortcuts work while OpenDDPM is running; choose
+Launch at login if you want them available after signing in.
 
-Source and releases: https://github.com/prBigBrother/OpenDDPM
-OpenDDPM and the bundled CLI helper are MIT licensed. BetterDisplay is separate
-software with its own license; OpenDDPM does not include a BetterDisplay license.
+Existing 0.1.0 configuration is preserved. Source and releases:
+https://github.com/prBigBrother/OpenDDPM
+OpenDDPM and its native driver's credited upstream code are MIT licensed.

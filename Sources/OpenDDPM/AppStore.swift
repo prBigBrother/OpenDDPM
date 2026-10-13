@@ -11,12 +11,14 @@ final class AppStore: ObservableObject {
     @Published var progress = "Ready"
     @Published var error: String?
     @Published var selectedPage = "setup"
-    @Published var dependencyInstalled = false
+    @Published var hotkeyIssues: [UUID: String] = [:]
     @Published var lastPresetID: UUID?
     let engine: MonitorEngine
     let configurationURL: URL
     var openWindow: (() -> Void)?
     var helperURL: URL
+    let hotkeys = HotkeyManager()
+    private var recordingShortcut = false
 
     init() {
         configurationURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -32,32 +34,37 @@ final class AppStore: ObservableObject {
             }
         }
         configuration = loaded
-        helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/betterdisplaycli")
+        helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/openddpm-ddc")
         engine = MonitorEngine(helper: helperURL)
         error = loadError
-        dependencyInstalled = Self.betterDisplayURL != nil
-    }
-    static var betterDisplayURL: URL? {
-        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "pro.betterdisplay.BetterDisplay")
-            ?? ["/Applications/BetterDisplay.app", NSHomeDirectory() + "/Applications/BetterDisplay.app"]
-                .map { URL(fileURLWithPath: $0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+        hotkeys.onPress = { [weak self] id in
+            guard let self, let preset = self.configuration.presets.first(where: { $0.id == id }) else { return }
+            self.apply(preset)
+        }
+        updateHotkeys()
     }
     var configured: Bool { !configuration.monitorSerial.isEmpty && configuration.inputConfirmed }
     var loginEnabled: Bool { SMAppService.mainApp.status == .enabled }
     func persist() {
         do { try ConfigurationFile.save(configuration, to: configurationURL) }
         catch { self.error = "Could not save configuration: \(error.localizedDescription)" }
+        updateHotkeys()
     }
-    func startBetterDisplay() {
-        guard let url = Self.betterDisplayURL else { dependencyInstalled = false; return }
-        dependencyInstalled = true
-        let options = NSWorkspace.OpenConfiguration(); options.activates = false
-        NSWorkspace.shared.openApplication(at: url, configuration: options) { _, _ in }
+    func updateHotkeys() {
+        let enabled = configured && !recordingShortcut ? configuration.presets.filter { !configuration.keepLocalVisible || $0.includes(configuration.localInput) } : []
+        hotkeyIssues = hotkeys.synchronize(enabled)
+    }
+    func shortcutRecording(_ active: Bool) { recordingShortcut = active; updateHotkeys() }
+    func setShortcut(_ shortcut: PresetShortcut?, for id: UUID) {
+        guard !busy, let index = configuration.presets.firstIndex(where: { $0.id == id }) else { return }
+        do {
+            var candidate = configuration; candidate.presets[index].shortcut = shortcut
+            try candidate.validate()
+            configuration = candidate
+        } catch { self.error = error.localizedDescription }
     }
     func refresh() {
         guard !busy else { return }
-        dependencyInstalled = Self.betterDisplayURL != nil
-        guard dependencyInstalled else { error = "Install BetterDisplay to discover and control your monitor."; return }
         busy = true; error = nil; progress = "Finding connected monitors"
         Task {
             do {
@@ -67,7 +74,7 @@ final class AppStore: ObservableObject {
                     configuration.monitorSerial = first.serial
                     configuration.monitorName = first.name
                 }
-                guard monitors.contains(where: { $0.serial == configuration.monitorSerial }) else { throw ControlError.message("No selected U4025QW with a serial identifier was found. Start BetterDisplay, enable DDC/CI, and connect your monitor.") }
+                guard monitors.contains(where: { $0.serial == configuration.monitorSerial }) else { throw ControlError.message("No selected U4025QW was found. Connect your monitor and enable DDC/CI in its on-screen menu.") }
                 progress = "Reading layout and inputs"
                 let current = try await engine.status(serial: configuration.monitorSerial)
                 status = current

@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/logo.png" width="128" alt="OpenDDPM icon"></p>
 <h1 align="center">OpenDDPM</h1>
 <p align="center">Your screen. Your way.<br>A native Mac menu bar app for Dell monitor inputs and split layouts.</p>
-<p align="center"><a href="https://github.com/prBigBrother/OpenDDPM/releases/latest">Download the latest release</a> · <a href="https://betterdisplay.pro">Get BetterDisplay</a> · <a href="LICENSE">MIT license</a></p>
+<p align="center"><a href="https://github.com/prBigBrother/OpenDDPM/releases/latest">Download the latest release</a> · <a href="LICENSE">MIT license</a></p>
 
 Pick a workspace from the menu bar. Create and edit presets in a separate native
 configuration window. OpenDDPM applies the monitor's real Picture-by-Picture or
@@ -9,6 +9,8 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 
 ## Features
 
+- Global hotkeys: record, change, or clear a shortcut for each preset on the Hotkeys page.
+- Standalone native DDC/CI driver; no external monitor-control app required.
 - Menu bar access to every saved preset, current status, and configuration.
 - Visual preset editor: full screen, 50/50, 75/25, 25/75, and small/large PIP.
 - DisplayPort, HDMI, and Thunderbolt input assignment.
@@ -22,31 +24,35 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 
 1. Download the DMG or ZIP from the [release page](https://github.com/prBigBrother/OpenDDPM/releases/latest).
 2. Drag **OpenDDPM.app** to **Applications**.
-3. Install and start [BetterDisplay](https://betterdisplay.pro), version 2.2 or newer.
-4. Open OpenDDPM and use **Monitor & inputs** to discover the monitor, select the
+3. Open OpenDDPM and use **Monitor & inputs** to discover the monitor, select the
    cable connected to this Mac, and confirm it.
-5. Pick a preset from the menu bar or create your own in the configuration window.
+4. Pick a preset from the menu bar or create your own in the configuration window.
 
-**First release signing:** v0.1.0 is ad-hoc signed and is not Apple notarized.
+**Release signing:** this release is ad-hoc signed and is not Apple notarized.
 macOS may block a downloaded copy on first launch. After attempting to open it,
 use **System Settings → Privacy & Security → Open Anyway** and confirm. Do not
 disable Gatekeeper. Developer ID signing/notarization can be added when an Apple
 Developer certificate is available.
 
-## Dependency included
+## Native monitor control and hotkeys
 
-The MIT-licensed [betterdisplaycli](https://github.com/waydabber/betterdisplaycli)
-helper is compiled from pinned, unmodified source and included inside the app.
-Its license is also bundled. You do not need to install the CLI separately.
+OpenDDPM includes its own small DDC/CI driver. Apple Silicon uses IOAVService;
+Intel uses IOI2CInterface. Neither transport needs another monitor-control app,
+a paid license, Accessibility permission, or Input Monitoring permission.
+The Apple Silicon discovery/transport implementation credits the MIT-licensed
+[m1ddc](https://github.com/waydabber/m1ddc) project. See the bundled
+[notice](Vendor/NativeDDC/NOTICE.md) for attribution and API limitations.
 
-**BetterDisplay itself is a separate required app**, not included or relicensed by
-OpenDDPM. It must be running with CLI/notification integration enabled (enabled
-by default upstream). OpenDDPM's setup screen detects it and provides a download
-link. BetterDisplay's own licensing and feature availability apply.
+Open **Hotkeys**, click **Record…** beside a preset, then press a combination
+with Command, Control, or Option. Escape cancels; **Clear** removes a binding.
+Shortcuts work while another app has focus, as long as OpenDDPM is running.
+Duplicate bindings are rejected and macOS registration conflicts are shown.
+Presets blocked by **Keep this Mac visible** also have their hotkeys disabled.
+Bindings are saved with your presets and included in preset export/import.
 
 ## Monitor support and switching behavior
 
-The first release is designed and hardware-tested with **Dell U4025QW**. Other
+The app is designed and hardware-tested with **Dell U4025QW**. Other
 monitors may use different vendor-specific layout codes and are not yet supported
 as validated models. Enable **DDC/CI** in the monitor's on-screen menu.
 
@@ -69,8 +75,8 @@ Returning may require the monitor joystick or an independent USB control path.
 ## Build from source
 
 Requirements: macOS and Apple's Command Line Tools, or Xcode, with Swift 5.9+.
-The build has no package-manager or network dependencies: the pinned CLI source
-is vendored in this repository.
+The build has no package-manager or network dependencies. Native driver source
+and its third-party license notices are included in this repository.
 
 ```sh
 xcode-select --install  # if Apple's tools are not already installed
@@ -84,21 +90,23 @@ cd OpenDDPM
 Outputs:
 
 - `build/OpenDDPM.app` — universal, ad-hoc signed app.
-- `dist/OpenDDPM-0.1.0-universal.dmg` — drag-to-Applications installer.
-- `dist/OpenDDPM-0.1.0-universal.zip` — portable application bundle.
+- `dist/OpenDDPM-0.2.0-universal.dmg` — drag-to-Applications installer.
+- `dist/OpenDDPM-0.2.0-universal.zip` — portable application bundle.
 - `dist/SHA256SUMS.txt` — asset checksums.
 
 Set `VERSION=…` when building a new version. To sign with Developer ID, set
 `SIGNING_IDENTITY="Developer ID Application: …"` before building; notarize the
 result using your own Apple credentials. No signing credentials are in this repo.
 
-For a read-only dependency smoke test, with BetterDisplay running:
+For a read-only native-driver smoke test:
 
 ```sh
 build/OpenDDPM.app/Contents/MacOS/OpenDDPM --diagnose
 ```
 
-The GitHub Actions workflow builds both architectures and runs core tests.
+The GitHub Actions workflow builds both architectures and runs core and packet-validation tests.
+Apple Silicon DDC control has been tested on a U4025QW. The Intel transport is
+compiled and packaged, but has not yet been verified on physical Intel hardware.
 
 ## Configuration and privacy
 
@@ -109,7 +117,7 @@ in your browser. No account, telemetry, or remote service is required for contro
 
 ## License and credits
 
-OpenDDPM is [MIT licensed](LICENSE). The bundled BetterDisplay CLI retains
-[waydabber's MIT license](Vendor/betterdisplaycli/LICENSE). The generated icon's
-source and prompt are included under `assets/`. OpenDDPM is independent software
-and is not affiliated with Dell or BetterDisplay.
+OpenDDPM is [MIT licensed](LICENSE). Native driver attribution and the upstream
+MIT license are included under [Vendor/NativeDDC](Vendor/NativeDDC/NOTICE.md).
+The generated icon's source and prompt are included under `assets/`.
+OpenDDPM is independent software and is not affiliated with Dell.
