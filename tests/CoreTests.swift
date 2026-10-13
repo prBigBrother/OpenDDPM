@@ -70,6 +70,11 @@ struct CoreTests {
         expectError("Unknown config schema rejected") { try configuration.validate() }
         check(VideoInput(code: 0x19) == .thunderbolt && VideoInput(code: 0x0f) == .dp, "Input register mappings")
         check(SplitLayout.largeLeft.code == 0x2a && SplitLayout.equal.code == 0x24, "U4025QW layout register mappings")
+        check(!RegisterValue.isValid(65535, register: 0xe8), "Transient invalid secondary input must be retried")
+        check(!RegisterValue.isValid(0, register: 0xe8), "Incomplete secondary-input replies must be retried")
+        check(!RegisterValue.isValid(5, register: 0xe9), "Unexpected mode replies must be retried")
+        check(RegisterValue.isValid(0x0f19, register: 0x60), "Main source masks the local connection byte")
+        check(RegisterValue.isValid(0x0f, register: 0xe8), "Valid secondary input accepted")
         print("PASS: \(count) core assertions")
     }
 }

@@ -96,6 +96,15 @@ struct RegisterWrite: Equatable {
     var label: String
 }
 
+enum RegisterValue {
+    static func isValid(_ value: Int, register: Int) -> Bool {
+        guard (0...65535).contains(value) else { return false }
+        if register == 0x60 || register == 0xe8 { return VideoInput(code: value & 0xff) != nil }
+        if register == 0xe9 { return [0, 1, 2, 0x21, 0x22, 0x24, 0x27, 0x28, 0x29, 0x2a].contains(value & 0xff) }
+        return true
+    }
+}
+
 enum TransitionPlanner {
     static func plan(_ preset: DisplayPreset, currentMain: VideoInput, local: VideoInput, keepVisible: Bool) throws -> [RegisterWrite] {
         try preset.validate()
@@ -148,7 +157,7 @@ actor MonitorEngine {
         for attempt in 0..<10 {
             do {
                 let text = try runner.run(["get", "-alphanumericSerial=\(serial)", "-ddc", String(format: "-vcp=0x%02X", register)])
-                guard let value = Int(text), value >= 0, value <= 65535 else { throw ControlError.message("Unexpected register response: \(text)") }
+                guard let value = Int(text), RegisterValue.isValid(value, register: register) else { throw ControlError.message("Monitor is still reconnecting; unexpected register response: \(text)") }
                 return value
             } catch { lastError = error }
             if attempt < 9 { try await Task.sleep(nanoseconds: 1_000_000_000) }
@@ -188,9 +197,14 @@ actor MonitorEngine {
         }
         if !preset.includes(configuration.localInput) { return nil }
         await progress("Checking monitor readback")
-        let after = try await status(serial: configuration.monitorSerial)
-        guard after.matches(preset) else { throw ControlError.message("Monitor readback differs from the preset: \(after.description). Refresh status and retry.") }
-        return after
+        var lastStatus: MonitorStatus?
+        for attempt in 0..<3 {
+            let after = try await status(serial: configuration.monitorSerial)
+            if after.matches(preset) { return after }
+            lastStatus = after
+            if attempt < 2 { try await Task.sleep(nanoseconds: 2_000_000_000) }
+        }
+        throw ControlError.message("Monitor readback differs from the preset: \(lastStatus?.description ?? "unavailable"). Refresh status and retry.")
     }
 }
 
