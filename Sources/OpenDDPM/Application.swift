@@ -16,6 +16,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu(title: "OpenDDPM")
         let configure = NSMenuItem(title: "Configure OpenDDPM…", action: #selector(showWindow), keyEquivalent: ",")
         configure.target = self; appMenu.addItem(configure)
+        let presetsMenu = NSMenuItem(title: "Show presets menu", action: #selector(showPresetsMenu), keyEquivalent: "p")
+        presetsMenu.target = self; appMenu.addItem(presetsMenu)
         appMenu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit OpenDDPM", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self; appMenu.addItem(quitItem)
@@ -33,7 +35,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         store.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.updateMenu() } }.store(in: &subscriptions)
         updateMenu()
         if CommandLine.arguments.contains("--show-menu") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.statusItem.button?.performClick(nil) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.showPresetsMenu() }
         }
         if !store.configured || CommandLine.arguments.contains("--show-window") { showWindow() }
         if store.dependencyInstalled {
@@ -67,6 +69,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         store.apply(preset)
     }
     @objc func refreshStatus() { store.refresh() }
+    @objc func showPresetsMenu() {
+        guard let menu = statusItem.menu else { return }
+        statusItem.popUpMenu(menu)
+    }
     @objc func showWindow() {
         if window == nil {
             let created = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
