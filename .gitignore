@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+build/
+dist/
+.DS_Store
+# Local discovery artifacts and the original personal CLI are not published.
+validation/
+original-layout.json
+dell-switcher
+Choose Preset.command
+Presets/
+RESEARCH.md
+tests/test_switcher.py
+
+local/
