@@ -44,7 +44,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     func updateMenu() {
         let menu = NSMenu()
         let heading = NSMenuItem(title: "OpenDDPM", action: nil, keyEquivalent: ""); heading.isEnabled = false; menu.addItem(heading)
-        let state = NSMenuItem(title: store.busy ? store.progress : (store.status?.description ?? "Configure monitor & inputs…"), action: nil, keyEquivalent: ""); state.isEnabled = false; menu.addItem(state)
+        let state = NSMenuItem(title: store.busy ? store.progress : (store.status?.description ?? (store.configured ? "Refresh monitor status…" : "Configure monitor & inputs…")), action: nil, keyEquivalent: ""); state.isEnabled = false; menu.addItem(state)
         menu.addItem(.separator())
         for preset in store.configuration.presets {
             let hidden = store.configuration.keepLocalVisible && !preset.includes(store.configuration.localInput)

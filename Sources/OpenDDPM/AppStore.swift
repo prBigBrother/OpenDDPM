@@ -25,7 +25,11 @@ final class AppStore: ObservableObject {
         var loadError: String?
         if FileManager.default.fileExists(atPath: configurationURL.path) {
             do { loaded = try ConfigurationFile.load(configurationURL) }
-            catch { loadError = "Saved configuration could not be read. Your file is preserved: \(error.localizedDescription)" }
+            catch {
+                let backup = configurationURL.deletingPathExtension().appendingPathExtension("unreadable-\(UUID().uuidString).json")
+                do { try FileManager.default.copyItem(at: configurationURL, to: backup); loadError = "Saved configuration could not be read. A backup is preserved at \(backup.path)." }
+                catch { loadError = "Saved configuration could not be read or backed up: \(error.localizedDescription)" }
+            }
         }
         configuration = loaded
         helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/betterdisplaycli")
@@ -67,6 +71,7 @@ final class AppStore: ObservableObject {
                 progress = "Reading layout and inputs"
                 let current = try await engine.status(serial: configuration.monitorSerial)
                 status = current
+                lastPresetID = configuration.presets.first(where: { current.matches($0) })?.id
                 if !configuration.inputConfirmed, let detected = current.localInput { configuration.localInput = detected }
                 progress = current.description
             } catch { self.error = error.localizedDescription; progress = "Connection needs attention" }
@@ -89,7 +94,7 @@ final class AppStore: ObservableObject {
             error = "This preset hides this Mac's \(configuration.localInput.title) input. Change ‘Keep this Mac visible’ in Setup to allow it."
             openWindow?(); return
         }
-        busy = true; error = nil; progress = "Preparing \(preset.name)"
+        busy = true; error = nil; lastPresetID = nil; status = nil; progress = "Preparing \(preset.name)"
         let snapshot = configuration
         Task {
             do {
