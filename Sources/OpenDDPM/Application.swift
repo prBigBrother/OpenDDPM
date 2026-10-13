@@ -11,6 +11,20 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        let mainMenu = NSMenu()
+        let appEntry = NSMenuItem(title: "OpenDDPM", action: nil, keyEquivalent: "")
+        let appMenu = NSMenu(title: "OpenDDPM")
+        let configure = NSMenuItem(title: "Configure OpenDDPM…", action: #selector(showWindow), keyEquivalent: ",")
+        configure.target = self; appMenu.addItem(configure)
+        appMenu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "Quit OpenDDPM", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self; appMenu.addItem(quitItem)
+        appEntry.submenu = appMenu; mainMenu.addItem(appEntry)
+        let fileEntry = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        fileEntry.submenu = fileMenu; mainMenu.addItem(fileEntry)
+        NSApp.mainMenu = mainMenu
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "OpenDDPM")
         statusItem.button?.image?.isTemplate = true
@@ -67,7 +81,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
-    @objc func quit() { NSApp.terminate(nil) }
+    @objc func quit() {
+        guard !store.busy else { NSSound.beep(); return }
+        NSApp.terminate(nil)
+    }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
 }
 
