@@ -108,7 +108,33 @@ enum RegisterValue {
 }
 
 enum TransitionPlanner {
-    static func plan(_ preset: DisplayPreset, currentMain: VideoInput, local: VideoInput, keepVisible: Bool) throws -> [RegisterWrite] {
+    static func plan(_ preset: DisplayPreset, current: MonitorStatus, local: VideoInput, keepVisible: Bool) throws -> [RegisterWrite] {
+        let sequence = try requiredSequence(preset, currentMain: current.main, local: local, keepVisible: keepVisible)
+        var main = current.main
+        var secondary = current.secondary
+        var mode = current.mode
+        var actions: [RegisterWrite] = []
+        for action in sequence {
+            switch action.register {
+            case 0xe9:
+                guard mode != action.value else { continue }
+                mode = action.value
+            case 0x60:
+                guard let input = VideoInput(code: action.value), main != input else { continue }
+                // Dell automatically swaps regions when selecting the secondary as main.
+                if secondary == input { secondary = main }
+                main = input
+            case 0xe8:
+                guard let input = VideoInput(code: action.value), secondary != input, main != input else { continue }
+                secondary = input
+            default: break
+            }
+            actions.append(action)
+        }
+        return actions
+    }
+
+    private static func requiredSequence(_ preset: DisplayPreset, currentMain: VideoInput, local: VideoInput, keepVisible: Bool) throws -> [RegisterWrite] {
         try preset.validate()
         if keepVisible && !preset.includes(local) { throw ControlError.message("This preset hides this Mac's \(local.title) input. Turn off ‘Keep this Mac visible’ in Setup to allow it.") }
         let source: (VideoInput) -> RegisterWrite = { RegisterWrite(register: 0x60, value: $0.code, label: "Selecting \($0.title)") }
@@ -190,7 +216,7 @@ actor MonitorEngine {
         try preset.validate()
         if configuration.keepLocalVisible && !preset.includes(configuration.localInput) { throw ControlError.message("This preset would hide this Mac. Check ‘Keep this Mac visible’ in Setup.") }
         let before = try await status(serial: configuration.monitorSerial)
-        let actions = try TransitionPlanner.plan(preset, currentMain: before.main, local: configuration.localInput, keepVisible: configuration.keepLocalVisible)
+        let actions = try TransitionPlanner.plan(preset, current: before, local: configuration.localInput, keepVisible: configuration.keepLocalVisible)
         if before.matches(preset) { return before }
         for (index, action) in actions.enumerated() {
             await progress("\(index + 1)/\(actions.count) · \(action.label)")

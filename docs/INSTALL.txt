@@ -1,4 +1,4 @@
-OpenDDPM 0.2.0
+OpenDDPM 0.2.1
 
 1. Drag OpenDDPM.app to Applications.
 2. Open OpenDDPM. Look for the split-monitor icon in the menu bar.

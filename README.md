@@ -17,6 +17,7 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 - First-run setup discovers monitors and identifies this Mac's physical input.
 - **Keep this Mac visible** blocks presets that would hide its input by default.
 - Automatic configuration persistence, preset import/export, and launch at login.
+- Applies only changed settings: matching presets send no writes, and layout-only changes send one layout write.
 - Monitor readback verifies the resulting layout when this Mac stays visible.
 - Universal binary for Apple Silicon and Intel; no Python or Homebrew required.
 
@@ -90,8 +91,8 @@ cd OpenDDPM
 Outputs:
 
 - `build/OpenDDPM.app` — universal, ad-hoc signed app.
-- `dist/OpenDDPM-0.2.0-universal.dmg` — drag-to-Applications installer.
-- `dist/OpenDDPM-0.2.0-universal.zip` — portable application bundle.
+- `dist/OpenDDPM-0.2.1-universal.dmg` — drag-to-Applications installer.
+- `dist/OpenDDPM-0.2.1-universal.zip` — portable application bundle.
 - `dist/SHA256SUMS.txt` — asset checksums.
 
 Set `VERSION=…` when building a new version. To sign with Developer ID, set

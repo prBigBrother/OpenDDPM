@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-VERSION="${VERSION:-0.2.0}"
+VERSION="${VERSION:-0.2.1}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 APP="$BUILD_DIR/OpenDDPM.app"
 rm -rf "$APP"

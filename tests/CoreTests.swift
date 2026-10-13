@@ -31,17 +31,18 @@ struct CoreTests {
                     for layout in SplitLayout.allCases {
                         let preset = DisplayPreset(name: "Test", layout: layout, main: main, secondary: secondary)
                         if !preset.includes(local) {
-                            expectError("Visibility guard works for \(local)") { _ = try TransitionPlanner.plan(preset, currentMain: local, local: local, keepVisible: true) }
-                            let plan = try TransitionPlanner.plan(preset, currentMain: local, local: local, keepVisible: false)
+                            expectError("Visibility guard works for \(local)") { _ = try TransitionPlanner.plan(preset, current: MonitorStatus(mode: 0x24, main: local, secondary: main, localInput: local), local: local, keepVisible: true) }
+                            let plan = try TransitionPlanner.plan(preset, current: MonitorStatus(mode: 0x24, main: local, secondary: main, localInput: local), local: local, keepVisible: false)
                             check(plan.last?.register == 0x60 && plan.last?.value == main.code, "Local input is removed only on the final write")
                         } else {
                             // Model Dell source swapping and assert the local input stays present.
                             for startingMain in VideoInput.allCases {
-                                let startingSub = startingMain == local ? VideoInput.allCases.first { $0 != local }! : local
+                                for startingSub in VideoInput.allCases where startingSub != startingMain {
+                              for startingLayout in SplitLayout.allCases where startingMain == local || (startingLayout != .full && startingSub == local) {
                                 var actualMain = startingMain
                                 var actualSub = startingSub
-                                var actualMode = 0x24
-                                let plan = try TransitionPlanner.plan(preset, currentMain: startingMain, local: local, keepVisible: true)
+                                var actualMode = startingLayout.code
+                                let plan = try TransitionPlanner.plan(preset, current: MonitorStatus(mode: actualMode, main: startingMain, secondary: startingLayout == .full ? nil : startingSub, localInput: local), local: local, keepVisible: true)
                                 for action in plan {
                                     if action.register == 0xe9 { actualMode = action.value }
                                     if action.register == 0x60, let input = VideoInput(code: action.value) {
@@ -53,11 +54,32 @@ struct CoreTests {
                                 }
                                 check(actualMode == layout.code && actualMain == main && (actualMode == 0 || actualSub == secondary), "Planner reaches requested sources")
                             }
+                              }
+                            }
                         }
                     }
                 }
             }
         }
+        let equal = DisplayPreset(name: "Equal", layout: .equal, main: .dp, secondary: .thunderbolt)
+        let matching = MonitorStatus(mode: 0x24, main: .dp, secondary: .thunderbolt, localInput: .dp)
+        let unchanged = try TransitionPlanner.plan(equal, current: matching, local: .dp, keepVisible: true)
+        check(unchanged.isEmpty, "Matching preset requires zero writes")
+        var changedLayout = equal; changedLayout.layout = .largeLeft
+        let layoutOnly = try TransitionPlanner.plan(changedLayout, current: matching, local: .dp, keepVisible: true)
+        check(layoutOnly.map(\.register) == [0xe9], "Layout-only change writes only the layout register")
+        var changedSecondary = equal; changedSecondary.secondary = .hdmi
+        let secondaryOnly = try TransitionPlanner.plan(changedSecondary, current: matching, local: .dp, keepVisible: true)
+        check(secondaryOnly.map(\.register) == [0xe8], "Secondary-only change writes only the secondary register")
+        var changedMain = equal; changedMain.main = .hdmi
+        let mainOnly = try TransitionPlanner.plan(changedMain, current: matching, local: .thunderbolt, keepVisible: true)
+        check(mainOnly.map(\.register) == [0x60], "Main-only change writes only the main register")
+        let swapped = DisplayPreset(name: "Swap", layout: .equal, main: .thunderbolt, secondary: .dp)
+        let swapOnly = try TransitionPlanner.plan(swapped, current: matching, local: .dp, keepVisible: true)
+        check(swapOnly.map(\.register) == [0x60], "Automatic region swap needs only one main-source write")
+        let full = DisplayPreset(name: "Full", layout: .full, main: .dp, secondary: .thunderbolt)
+        let fullOnly = try TransitionPlanner.plan(full, current: matching, local: .dp, keepVisible: true)
+        check(fullOnly.map(\.register) == [0xe9], "Going full-screen on existing main writes only the layout register")
         var configuration = AppConfiguration()
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("openddpm-tests-\(UUID()).json")
         defer { try? FileManager.default.removeItem(at: path) }
