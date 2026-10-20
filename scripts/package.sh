@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-VERSION="${VERSION:-0.2.1}"
+VERSION="${VERSION:-0.3.0}"
 APP="${BUILD_DIR:-$ROOT/build}/OpenDDPM.app"
 mkdir -p dist
 ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/OpenDDPM-$VERSION-universal.zip"

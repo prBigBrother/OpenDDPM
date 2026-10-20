@@ -13,3 +13,5 @@ RESEARCH.md
 tests/test_switcher.py
 
 local/
+
+node_modules/

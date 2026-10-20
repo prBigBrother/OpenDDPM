@@ -12,6 +12,11 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: HomeKit tests
+        run: npm ci --prefix homekit --ignore-scripts && node --test homekit/bridge.test.mjs
       - name: Core tests
         run: ./scripts/test.sh
       - name: Build universal app

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import ServiceManagement
+import CoreGraphics
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -13,12 +14,19 @@ final class AppStore: ObservableObject {
     @Published var selectedPage = "setup"
     @Published var hotkeyIssues: [UUID: String] = [:]
     @Published var lastPresetID: UUID?
+    @Published var transition = TransitionState()
+    let coordinator: PresetCoordinator
+    let launcher = HotkeyManager()
+    var openRemote: (() -> Void)?
+    var previousPreset: DisplayPreset? { configuration.presets.first { $0.id == transition.previousPresetID } }
     let engine: MonitorEngine
     let configurationURL: URL
     var openWindow: (() -> Void)?
     var helperURL: URL
     let hotkeys = HotkeyManager()
+    let homekit = HomeKitManager()
     private var recordingShortcut = false
+    private var systemObservers: [NSObjectProtocol] = []
 
     init() {
         configurationURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -35,13 +43,41 @@ final class AppStore: ObservableObject {
         }
         configuration = loaded
         helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/openddpm-ddc")
-        engine = MonitorEngine(helper: helperURL)
+        let monitorEngine = MonitorEngine(helper: helperURL)
+        engine = monitorEngine
+        coordinator = PresetCoordinator(engine: monitorEngine)
         error = loadError
         hotkeys.onPress = { [weak self] id in
             guard let self, let preset = self.configuration.presets.first(where: { $0.id == id }) else { return }
             self.apply(preset)
         }
+        coordinator.onChange = { [weak self] in self?.synchronizeState() }
+        launcher.onPress = { [weak self] _ in self?.openRemote?() }
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.willSleepNotification] {
+            systemObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.coordinator.setAvailability("Mac is asleep or locked. Wake and unlock it, then retry verification.") }
+            })
+        }
+        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.didWakeNotification] {
+            systemObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.resumeControl() }
+            })
+        }
+        systemObservers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.coordinator.setAvailability("Mac is locked. Unlock it, then retry verification.") }
+        })
+        systemObservers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.resumeControl() }
+        })
+        if Self.screenLocked { coordinator.setAvailability("Mac is locked. Unlock it, then retry verification.") }
         updateHotkeys()
+    }
+    private static var screenLocked: Bool { (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true }
+    private func resumeControl() {
+        guard !Self.screenLocked else { return }
+        coordinator.setAvailability(nil)
+        refresh()
     }
     var configured: Bool { !configuration.monitorSerial.isEmpty && configuration.inputConfirmed }
     var loginEnabled: Bool { SMAppService.mainApp.status == .enabled }
@@ -53,6 +89,9 @@ final class AppStore: ObservableObject {
     func updateHotkeys() {
         let enabled = configured && !recordingShortcut ? configuration.presets.filter { !configuration.keepLocalVisible || $0.includes(configuration.localInput) } : []
         hotkeyIssues = hotkeys.synchronize(enabled)
+        let remote = DisplayPreset(id: Self.remoteID, name: "Preset remote", layout: .full, main: .dp, secondary: .hdmi, shortcut: configuration.effectiveRemoteShortcut)
+        let issues = launcher.synchronize(recordingShortcut ? [] : [remote])
+        if let issue = issues[Self.remoteID] { hotkeyIssues[Self.remoteID] = issue }
     }
     func shortcutRecording(_ active: Bool) { recordingShortcut = active; updateHotkeys() }
     func setShortcut(_ shortcut: PresetShortcut?, for id: UUID) {
@@ -63,27 +102,27 @@ final class AppStore: ObservableObject {
             configuration = candidate
         } catch { self.error = error.localizedDescription }
     }
-    func refresh() {
-        guard !busy else { return }
-        busy = true; error = nil; progress = "Finding connected monitors"
-        Task {
-            do {
-                let discovered = try await engine.discover()
-                monitors = discovered.filter { $0.model.contains("U4025QW") || $0.name.contains("U4025QW") }
-                if configuration.monitorSerial.isEmpty, let first = monitors.first {
-                    configuration.monitorSerial = first.serial
-                    configuration.monitorName = first.name
-                }
-                guard monitors.contains(where: { $0.serial == configuration.monitorSerial }) else { throw ControlError.message("No selected U4025QW was found. Connect your monitor and enable DDC/CI in its on-screen menu.") }
-                progress = "Reading layout and inputs"
-                let current = try await engine.status(serial: configuration.monitorSerial)
-                status = current
-                lastPresetID = configuration.presets.first(where: { current.matches($0) })?.id
-                if !configuration.inputConfirmed, let detected = current.localInput { configuration.localInput = detected }
-                progress = current.description
-            } catch { self.error = error.localizedDescription; progress = "Connection needs attention" }
-            busy = false
+    static let remoteID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    func synchronizeState() {
+        transition = coordinator.state
+        busy = coordinator.busy
+        progress = transition.progress
+        status = transition.monitor
+        lastPresetID = transition.observedAt == nil ? nil : transition.verifiedPresetID
+        monitors = coordinator.monitors.filter { $0.name.contains("U4025QW") }
+        if configuration.monitorSerial.isEmpty, let first = monitors.first {
+            configuration.monitorSerial = first.serial; configuration.monitorName = first.name
         }
+        if !configuration.inputConfirmed, let detected = status?.localInput { configuration.localInput = detected }
+    }
+    func refresh(quietly: Bool = false) { coordinator.refresh(configuration: configuration, quietly: quietly) }
+    func previous() {
+        guard let preset = previousPreset else { return }
+        apply(preset)
+    }
+    func setRemoteShortcut(_ shortcut: PresetShortcut) {
+        do { var candidate = configuration; candidate.remoteShortcut = shortcut; try candidate.validate(); configuration = candidate }
+        catch { self.error = error.localizedDescription }
     }
     func selectMonitor(_ serial: String) {
         guard !busy else { return }
@@ -94,26 +133,16 @@ final class AppStore: ObservableObject {
         refresh()
     }
     func confirmInput() { configuration.inputConfirmed = true; selectedPage = "presets" }
+    @discardableResult
+    func request(_ preset: DisplayPreset) throws -> UUID {
+        let id = try coordinator.submit(preset, configuration: configuration)
+        error = nil
+        return id
+    }
     func apply(_ preset: DisplayPreset) {
-        guard !busy else { return }
         guard configured else { selectedPage = "setup"; openWindow?(); return }
-        if configuration.keepLocalVisible && !preset.includes(configuration.localInput) {
-            error = "This preset hides this Mac's \(configuration.localInput.title) input. Change ‘Keep this Mac visible’ in Setup to allow it."
-            openWindow?(); return
-        }
-        busy = true; error = nil; lastPresetID = nil; status = nil; progress = "Preparing \(preset.name)"
-        let snapshot = configuration
-        Task {
-            do {
-                let result = try await engine.apply(preset, configuration: snapshot) { [self] text in
-                    await MainActor.run { self.progress = text }
-                }
-                status = result
-                lastPresetID = preset.id
-                progress = result == nil ? "Applied \(preset.name) · this Mac is hidden; readback unavailable" : "Applied \(preset.name) · verified"
-            } catch { self.error = error.localizedDescription; progress = "Preset could not be verified" }
-            busy = false
-        }
+        do { _ = try request(preset); error = nil }
+        catch { self.error = error.localizedDescription }
     }
     func savePreset(_ preset: DisplayPreset) {
         do {

@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-VERSION="${VERSION:-0.2.1}"
+VERSION="${VERSION:-0.3.0}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 APP="$BUILD_DIR/OpenDDPM.app"
 rm -rf "$APP"
@@ -32,11 +32,14 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>OpenDDPM presets</string><key>CFBundleURLSchemes</key><array><string>openddpm</string></array></dict></array>
 </dict></plist>
 EOF
 cp Vendor/NativeDDC/LICENSE-m1ddc.txt "$APP/Contents/Resources/NativeDDC-LICENSE.txt"
 cp Vendor/NativeDDC/NOTICE.md "$APP/Contents/Resources/NativeDDC-NOTICE.md"
 cp LICENSE "$APP/Contents/Resources/OpenDDPM-LICENSE.txt"
+mkdir -p "$APP/Contents/Resources/HomeKit"
+cp homekit/package.json homekit/package-lock.json homekit/bridge.mjs homekit/install.mjs "$APP/Contents/Resources/HomeKit/"
 cp assets/logo.png "$APP/Contents/Resources/logo.png"
 ICONSET="$BUILD_DIR/AppIcon.iconset"
 mkdir -p "$ICONSET"

@@ -51,14 +51,16 @@ struct AppConfiguration: Codable {
     var inputConfirmed = false
     var keepLocalVisible = true
     var presets = DisplayPreset.defaults
+    var remoteShortcut: PresetShortcut? = nil
+    var effectiveRemoteShortcut: PresetShortcut { remoteShortcut ?? PresetShortcut(keyCode: 49, modifiers: PresetShortcut.control | PresetShortcut.option, keyLabel: "Space") }
     func validate() throws {
         guard schemaVersion == 1 else { throw ControlError.message("This configuration uses an unsupported format.") }
         guard !monitorSerial.contains("\n"), monitorSerial.count < 200, presets.count <= 100 else { throw ControlError.message("Invalid monitor or preset data.") }
         guard Set(presets.map(\.id)).count == presets.count else { throw ControlError.message("Preset IDs must be unique.") }
         for preset in presets { try preset.validate() }
-        let shortcuts = presets.compactMap(\.shortcut)
+        let shortcuts = presets.compactMap(\.shortcut) + [remoteShortcut].compactMap { $0 }
         for shortcut in shortcuts { try shortcut.validate() }
-        guard Set(shortcuts.map(\.identity)).count == shortcuts.count else { throw ControlError.message("Two presets cannot use the same hotkey.") }
+        guard Set(shortcuts.map(\.identity)).count == shortcuts.count else { throw ControlError.message("Presets and the remote must use different hotkeys.") }
     }
 }
 
@@ -77,7 +79,7 @@ struct ConnectedMonitor: Identifiable, Equatable {
     }
 }
 
-struct MonitorStatus {
+struct MonitorStatus: Codable, Equatable {
     var mode: Int
     var main: VideoInput
     var secondary: VideoInput?
@@ -150,89 +152,6 @@ enum TransitionPlanner {
             return [mode, sub(preset.main), source(preset.main), sub(preset.secondary)]
         }
         return [mode, source(preset.main), sub(preset.secondary)]
-    }
-}
-
-struct HelperRunner {
-    let executable: URL
-    func run(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        do { try process.run() } catch { throw ControlError.message("The built-in monitor driver could not start: \(error.localizedDescription)") }
-        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: timeout)
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        timeout.cancel()
-        let output = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard process.terminationStatus == 0, !output.hasPrefix("Failed.") else {
-            throw ControlError.message(output.isEmpty ? "The monitor did not respond. Check its cable and enable DDC/CI in the monitor menu." : output)
-        }
-        return output
-    }
-}
-
-actor MonitorEngine {
-    let runner: HelperRunner
-    init(helper: URL) { runner = HelperRunner(executable: helper) }
-    func discover() throws -> [ConnectedMonitor] { try ConnectedMonitor.decode(runner.run(["list"])) }
-    func read(_ register: Int, serial: String) async throws -> Int {
-        var lastError: Error = ControlError.message("Monitor unavailable.")
-        for attempt in 0..<10 {
-            do {
-                let text = try runner.run(["read", serial, String(format: "0x%02X", register)])
-                guard let value = Int(text), RegisterValue.isValid(value, register: register) else { throw ControlError.message("Monitor is still reconnecting; unexpected register response: \(text)") }
-                return value
-            } catch { lastError = error }
-            if attempt < 9 { try await Task.sleep(nanoseconds: 1_000_000_000) }
-        }
-        throw lastError
-    }
-    func status(serial: String) async throws -> MonitorStatus {
-        let mode = try await read(0xe9, serial: serial) & 0xff
-        let source = try await read(0x60, serial: serial)
-        guard let main = VideoInput(code: source & 0xff) else { throw ControlError.message("This monitor reports an unsupported main input.") }
-        let secondary = mode == 0 ? nil : VideoInput(code: try await read(0xe8, serial: serial) & 0xff)
-        return MonitorStatus(mode: mode, main: main, secondary: secondary, localInput: VideoInput(code: source >> 8 & 0xff))
-    }
-    func write(_ action: RegisterWrite, serial: String) async throws {
-        var lastError: Error = ControlError.message("Monitor unavailable.")
-        for attempt in 0..<10 {
-            do {
-                _ = try runner.run(["write", serial, String(format: "0x%02X", action.register), String(format: "0x%02X", action.value)])
-                return
-            } catch { lastError = error }
-            if attempt < 9 { try await Task.sleep(nanoseconds: 1_000_000_000) }
-        }
-        throw lastError
-    }
-    func apply(_ preset: DisplayPreset, configuration: AppConfiguration, progress: @escaping @Sendable (String) async -> Void) async throws -> MonitorStatus? {
-        guard configuration.inputConfirmed, !configuration.monitorSerial.isEmpty else { throw ControlError.message("Select your monitor and identify this Mac's input in Setup first.") }
-        // Validate before issuing any writes.
-        try preset.validate()
-        if configuration.keepLocalVisible && !preset.includes(configuration.localInput) { throw ControlError.message("This preset would hide this Mac. Check ‘Keep this Mac visible’ in Setup.") }
-        let before = try await status(serial: configuration.monitorSerial)
-        let actions = try TransitionPlanner.plan(preset, current: before, local: configuration.localInput, keepVisible: configuration.keepLocalVisible)
-        if before.matches(preset) { return before }
-        for (index, action) in actions.enumerated() {
-            await progress("\(index + 1)/\(actions.count) · \(action.label)")
-            try await write(action, serial: configuration.monitorSerial)
-            try await Task.sleep(nanoseconds: 4_000_000_000)
-        }
-        if !preset.includes(configuration.localInput) { return nil }
-        await progress("Checking monitor readback")
-        var lastStatus: MonitorStatus?
-        for attempt in 0..<3 {
-            let after = try await status(serial: configuration.monitorSerial)
-            if after.matches(preset) { return after }
-            lastStatus = after
-            if attempt < 2 { try await Task.sleep(nanoseconds: 2_000_000_000) }
-        }
-        throw ControlError.message("Monitor readback differs from the preset: \(lastStatus?.description ?? "unavailable"). Refresh status and retry.")
     }
 }
 

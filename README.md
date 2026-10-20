@@ -9,6 +9,12 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 
 ## Features
 
+- Compact preset remote: click the menu bar icon or press Control–Option–Space.
+- Latest selection wins: change your target while switching without overlapping monitor commands.
+- Adaptive readiness checks, a bounded transition deadline, and a local timing journal.
+- Previous verified preset and explicit retry verification.
+- Apple Shortcuts URLs and authenticated loopback automation API.
+- Optional local HomeKit television with preset inputs and scene buttons.
 - Global hotkeys: record, change, or clear a shortcut for each preset on the Hotkeys page.
 - Standalone native DDC/CI driver; no external monitor-control app required.
 - Menu bar access to every saved preset, current status, and configuration.
@@ -62,11 +68,18 @@ when reported by the monitor, but asks you to confirm the physical cable. Setup
 does not switch the display. Preset export/import transfers layouts without
 overwriting the second Mac's monitor/input setup.
 
-Typical transitions take roughly 10–20 seconds because the monitor and macOS need
-time to rediscover the display after layout/source changes. The UI remains
-responsive and reports progress. The planner accounts for Dell's automatic
-main/secondary source swapping and serial-targets each command because macOS
-display identifiers can change with PBP layouts.
+Transitions wait for monitor readback instead of sleeping four seconds after every
+write. A single coordinator owns all UI, hotkey and automation requests. A new
+selection replaces the pending target; the current hardware operation finishes
+before the next target is planned from actual state. Readiness checks and helper
+calls share a 25-second transition deadline. Monitor firmware and macOS display
+rediscovery still determine the physical switching time.
+
+The remote distinguishes selected, applying, verified and unverified states.
+A hidden Mac input is explicitly unverified. **Previous preset** returns to the
+last confirmed preset when the control channel is available. The local journal
+at `~/Library/Logs/OpenDDPM/transitions.jsonl` records request IDs, the write plan,
+I/O timings and readback; it rotates at 2 MB.
 
 If you turn off **Keep this Mac visible**, an excluding preset prepares all writes
 while retaining the local input, then hides this Mac with its final write. It
@@ -91,8 +104,8 @@ cd OpenDDPM
 Outputs:
 
 - `build/OpenDDPM.app` — universal, ad-hoc signed app.
-- `dist/OpenDDPM-0.2.1-universal.dmg` — drag-to-Applications installer.
-- `dist/OpenDDPM-0.2.1-universal.zip` — portable application bundle.
+- `dist/OpenDDPM-0.3.0-universal.dmg` — drag-to-Applications installer.
+- `dist/OpenDDPM-0.3.0-universal.zip` — portable application bundle.
 - `dist/SHA256SUMS.txt` — asset checksums.
 
 Set `VERSION=…` when building a new version. To sign with Developer ID, set
@@ -122,3 +135,60 @@ OpenDDPM is [MIT licensed](LICENSE). Native driver attribution and the upstream
 MIT license are included under [Vendor/NativeDDC](Vendor/NativeDDC/NOTICE.md).
 The generated icon's source and prompt are included under `assets/`.
 OpenDDPM is independent software and is not affiliated with Dell.
+
+## Apple Shortcuts and scripting
+
+Right-click a preset in the remote and choose **Copy Apple Shortcuts URL**. Use
+that URL with the **URL** and **Open URLs** actions in Apple Shortcuts. URLs have
+the form `openddpm://apply?id=PRESET-UUID`; they launch the app when needed.
+`openddpm://remote` opens the remote and `openddpm://previous` selects the previous
+confirmed preset. Opening a URL acknowledges dispatch, not hardware verification.
+
+With OpenDDPM running:
+
+```sh
+APP=/Applications/OpenDDPM.app/Contents/MacOS/OpenDDPM
+"$APP" --list-presets
+"$APP" --status
+"$APP" --apply 'PRESET-UUID-OR-UNIQUE-NAME' --wait
+"$APP" --previous --wait
+"$APP" --remote
+```
+
+`--wait` follows that exact request. Exit codes: 0 verified, 1 failed or unavailable,
+3 sent but unverified (Mac hidden), 4 superseded by a newer request. A missing
+`--wait` returns an accepted request ID immediately. `--status` requests fresh
+readback; its `observedAt` field is absent when the state cannot be confirmed.
+
+The API binds only to `127.0.0.1:57571`. Its bearer credential is stored with mode
+0600 at `~/Library/Application Support/OpenDDPM/control.json`. Do not share or
+commit that file. Commands: `GET /presets`, `GET /status`, `POST /apply` with
+`{"preset":"UUID"}`, `GET /requests/UUID`, `POST /previous`, `POST /refresh`, and
+`POST /remote`. Status is cached; refresh is queued through the same coordinator.
+Request receipts retain the latest 100 requests for the current app session.
+
+## Apple Home
+
+Open **Configure OpenDDPM → Apple Home & Shortcuts → Install & start**. The optional
+bridge uses an existing Node.js 22, 24 or 26 runtime and downloads pinned npm
+dependencies. The native monitor app itself still needs no Node.js or Homebridge.
+
+On iPhone, use **Home → + → Add Accessory** to scan the Monitor QR code displayed
+in settings. Its inputs select whole OpenDDPM presets. Add the optional Scenes
+QR code to expose one momentary switch per preset for scenes and automations.
+HomeKit uses standard local HAP pairing. No pairing code is sent to a cloud
+service. Pairing data stays in the local application support directory.
+
+The bridge starts at login. **Stop** removes its login service but preserves
+pairings. The Mac must be awake, OpenDDPM must be running, and its DDC control
+channel must survive the selected layout. An independent USB controller is not
+implemented in this version. Monitor power commands are unsupported; the TV
+accessory exists for selecting presets. Unverified or unavailable monitor state
+is reported as unavailable rather than confirmed.
+
+HomeKit source and tests live in `homekit/`. To verify them with supported Node:
+
+```sh
+npm ci --prefix homekit --ignore-scripts
+node --test homekit/bridge.test.mjs
+```

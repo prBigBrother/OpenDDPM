@@ -52,6 +52,7 @@ struct ConfigurationView: View {
                 navigation("setup", "Monitor & inputs", "display")
                 navigation("presets", "Presets", "rectangle.split.2x1")
                 navigation("hotkeys", "Hotkeys", "command")
+                navigation("automation", "Apple Home & Shortcuts", "house")
                 navigation("about", "About OpenDDPM", "info.circle")
                 Spacer()
                 VStack(alignment: .leading, spacing: 7) {
@@ -67,6 +68,7 @@ struct ConfigurationView: View {
                         if store.selectedPage == "setup" { SetupView(store: store) }
                         else if store.selectedPage == "presets" { PresetsView(store: store) }
                         else if store.selectedPage == "hotkeys" { HotkeysView(store: store) }
+                        else if store.selectedPage == "automation" { AutomationSettingsView(store: store, homekit: store.homekit) }
                         else { AboutView(store: store) }
                     }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -168,9 +170,9 @@ private struct PresetsView: View {
                     }
                     HStack {
                         if blocked { Label("Hides this Mac", systemImage: "eye.slash").font(.caption2).foregroundStyle(.secondary) }
-                        else if store.lastPresetID == preset.id { Label("Applied", systemImage: "checkmark").font(.caption2).foregroundStyle(accent) }
+                        else if store.lastPresetID == preset.id { Label("Verified", systemImage: "checkmark").font(.caption2).foregroundStyle(accent) }
                         Spacer()
-                        Button("Apply") { store.apply(preset) }.disabled(store.busy || blocked || !store.configured)
+                        Button(store.transition.desiredPresetID == preset.id && store.busy ? "Selected" : "Apply") { store.apply(preset) }.disabled(blocked || !store.configured)
                     }
                 }.padding(15).background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 13)).overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Color.white.opacity(0.07)))
             }
@@ -212,6 +214,13 @@ private struct HotkeysView: View {
     @ObservedObject var store: AppStore
     var body: some View {
         title("Your workspace, at a keystroke.", subtitle: "Bind a global shortcut to any preset. It works while another app is focused.")
+        HStack {
+            Text("Open preset remote").font(.headline)
+            Spacer()
+            ShortcutRecorder(preset: DisplayPreset(id: AppStore.remoteID, name: "Preset remote", layout: .full, main: .dp, secondary: .hdmi, shortcut: store.configuration.effectiveRemoteShortcut), capture: { store.setRemoteShortcut($0) }, recordingChanged: { store.shortcutRecording($0) }).frame(width: 145, height: 28)
+            Button("Default") { store.setRemoteShortcut(PresetShortcut(keyCode: 49, modifiers: PresetShortcut.control | PresetShortcut.option, keyLabel: "Space")) }
+        }
+        if let issue = store.hotkeyIssues[AppStore.remoteID] { Text(issue).foregroundStyle(.orange) }
         Text("Click Record, then press a key with Control, Option, or Command. Escape cancels.").font(.callout).foregroundStyle(.secondary)
         VStack(spacing: 0) {
             ForEach(store.configuration.presets) { preset in
