@@ -45,7 +45,7 @@ final class LocalControlServer {
             session.start()
         }
         server.stateUpdateHandler = { [weak self] state in
-            if case .failed(let error) = state { Task { @MainActor in self?.store.error = "Local control could not start: \(error.localizedDescription)" } }
+            if case .failed(let error) = state { Task { @MainActor [weak self] in self?.store.error = "Local control could not start: \(error.localizedDescription)" } }
         }
         listener = server; server.start(queue: queue)
         try JSONEncoder().encode(descriptor).write(to: ControlPaths.connection, options: .atomic)

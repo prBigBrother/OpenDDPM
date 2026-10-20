@@ -56,19 +56,19 @@ final class AppStore: ObservableObject {
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.willSleepNotification] {
             systemObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.coordinator.setAvailability("Mac is asleep or locked. Wake and unlock it, then retry verification.") }
+                Task { @MainActor [weak self] in self?.coordinator.setAvailability("Mac is asleep or locked. Wake and unlock it, then retry verification.") }
             })
         }
         for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.didWakeNotification] {
             systemObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.resumeControl() }
+                Task { @MainActor [weak self] in self?.resumeControl() }
             })
         }
         systemObservers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.coordinator.setAvailability("Mac is locked. Unlock it, then retry verification.") }
+            Task { @MainActor [weak self] in self?.coordinator.setAvailability("Mac is locked. Unlock it, then retry verification.") }
         })
         systemObservers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.resumeControl() }
+            Task { @MainActor [weak self] in self?.resumeControl() }
         })
         if Self.screenLocked { coordinator.setAvailability("Mac is locked. Unlock it, then retry verification.") }
         updateHotkeys()

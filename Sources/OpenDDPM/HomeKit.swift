@@ -22,7 +22,7 @@ final class HomeKitManager: ObservableObject {
     private let directory = ControlPaths.directory.appendingPathComponent("homekit")
     init() {
         reload()
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.reload() } }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor [weak self] in self?.reload() } }
     }
     func reload() {
         let agent = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/io.github.prbigbrother.OpenDDPM.homekit.plist")
