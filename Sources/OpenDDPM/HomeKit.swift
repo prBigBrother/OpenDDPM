@@ -10,6 +10,7 @@ final class HomeKitManager: ObservableObject {
     @Published var pin = ""
     @Published var televisionPaired = false
     @Published var scenesPaired = false
+    @Published var scenesEnabled = true
     @Published var running = false
     @Published var televisionImage: NSImage?
     @Published var scenesImage: NSImage?
@@ -30,6 +31,7 @@ final class HomeKitManager: ObservableObject {
             pin = row["pin"] as? String ?? ""
             televisionPaired = row["televisionPaired"] as? Bool ?? false
             scenesPaired = row["scenesPaired"] as? Bool ?? false
+            scenesEnabled = row["scenesEnabled"] as? Bool ?? true
             televisionImage = NSImage(contentsOf: directory.appendingPathComponent("television.png"))
             scenesImage = NSImage(contentsOf: directory.appendingPathComponent("scenes.png"))
         }
@@ -76,10 +78,10 @@ struct AutomationSettingsView: View {
                         if homekit.working { ProgressView().controlSize(.small) }
                     }
                     if homekit.running, !homekit.pin.isEmpty {
-                        Text("On iPhone: Home → + → Add Accessory. Scan Monitor first; add Scenes for preset buttons in automations.").font(.callout)
+                        Text(homekit.scenesEnabled ? "On iPhone: Home → + → Add Accessory. Scan Monitor first; add Scenes for preset buttons in automations." : "On iPhone: Home → + → Add Accessory. Monitor provides all presets through its input picker.").font(.callout)
                         HStack(alignment: .top, spacing: 18) {
                             pairing("Monitor", image: homekit.televisionImage, paired: homekit.televisionPaired)
-                            pairing("Scenes", image: homekit.scenesImage, paired: homekit.scenesPaired)
+                            if homekit.scenesEnabled { pairing("Scenes", image: homekit.scenesImage, paired: homekit.scenesPaired) }
                         }
                         Text(homekit.pin).font(.title3.monospaced()).textSelection(.enabled).privacySensitive()
                     }

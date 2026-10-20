@@ -115,6 +115,10 @@ export async function startBridge(directory = path.join(os.homedir(), 'Library/A
   process.umask(0o077);
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   HAPStorage.setCustomStoragePath(path.join(directory, 'pairings'));
+  let settings = {};
+  try { settings = JSON.parse(await fs.readFile(path.join(directory, 'settings.json'), 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const scenesEnabled = settings.publishScenes !== false;
   const identityPath = path.join(directory, 'identity.json');
   let identity;
   try { identity = JSON.parse(await fs.readFile(identityPath, 'utf8')); }
@@ -126,14 +130,14 @@ export async function startBridge(directory = path.join(os.homedir(), 'Library/A
   let controller = null, presetSignature = '', polling = false;
   const healthPath = path.join(directory, 'health.json');
   async function publish(presets) {
-    if (controller) { await controller.television.unpublish(); await controller.sceneBridge.unpublish(); }
+    if (controller) { await controller.television.unpublish(); if (scenesEnabled) await controller.sceneBridge.unpublish(); }
     controller = buildAccessories(presets, identity, client);
     await privateJSON(identityPath, identity);
     await controller.television.publish({ username: identity.tv, pincode: identity.pin, category: Categories.TELEVISION, port: 57572 });
-    await controller.sceneBridge.publish({ username: identity.scenes, pincode: identity.pin, category: Categories.BRIDGE, port: 57573 });
+    if (scenesEnabled) await controller.sceneBridge.publish({ username: identity.scenes, pincode: identity.pin, category: Categories.BRIDGE, port: 57573 });
     await QRCode.toFile(path.join(directory, 'television.png'), controller.television.setupURI(), { width: 240, margin: 2 });
-    await QRCode.toFile(path.join(directory, 'scenes.png'), controller.sceneBridge.setupURI(), { width: 240, margin: 2 });
-    await privateJSON(path.join(directory, 'pairing.json'), { pin: identity.pin, televisionPaired: (AccessoryInfo.load(identity.tv)?.paired() ?? false), scenesPaired: (AccessoryInfo.load(identity.scenes)?.paired() ?? false) });
+    if (scenesEnabled) await QRCode.toFile(path.join(directory, 'scenes.png'), controller.sceneBridge.setupURI(), { width: 240, margin: 2 });
+    await privateJSON(path.join(directory, 'pairing.json'), { pin: identity.pin, scenesEnabled, televisionPaired: (AccessoryInfo.load(identity.tv)?.paired() ?? false), scenesPaired: (AccessoryInfo.load(identity.scenes)?.paired() ?? false) });
     presetSignature = JSON.stringify(presets);
   }
   async function poll() {
@@ -146,7 +150,7 @@ export async function startBridge(directory = path.join(os.homedir(), 'Library/A
       const status = await client.status();
       controller.acceptStatus(status);
       if (!status.busy) await client.refresh();
-      await privateJSON(path.join(directory, 'pairing.json'), { pin: identity.pin, televisionPaired: (AccessoryInfo.load(identity.tv)?.paired() ?? false), scenesPaired: (AccessoryInfo.load(identity.scenes)?.paired() ?? false) });
+      await privateJSON(path.join(directory, 'pairing.json'), { pin: identity.pin, scenesEnabled, televisionPaired: (AccessoryInfo.load(identity.tv)?.paired() ?? false), scenesPaired: (AccessoryInfo.load(identity.scenes)?.paired() ?? false) });
       await privateJSON(healthPath, { running: true, connected: true, time: new Date().toISOString() });
     } catch (error) {
       controller?.clearStatus();
@@ -157,7 +161,7 @@ export async function startBridge(directory = path.join(os.homedir(), 'Library/A
   const timer = setInterval(poll, 4000);
   const stop = async () => {
     clearInterval(timer);
-    if (controller) { await controller.television.unpublish(); await controller.sceneBridge.unpublish(); }
+    if (controller) { await controller.television.unpublish(); if (scenesEnabled) await controller.sceneBridge.unpublish(); }
     await privateJSON(healthPath, { running: false, connected: false, time: new Date().toISOString() });
     process.exit(0);
   };

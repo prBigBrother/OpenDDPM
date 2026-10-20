@@ -179,6 +179,13 @@ QR code to expose one momentary switch per preset for scenes and automations.
 HomeKit uses standard local HAP pairing. No pairing code is sent to a cloud
 service. Pairing data stays in the local application support directory.
 
+Monitor works independently of Scenes. For a Monitor-only installation, remove
+Scenes in Apple Home and set `"publishScenes": false` in the local
+`~/Library/Application Support/OpenDDPM/homekit/settings.json`, then restart the
+HomeKit service. This preserves Monitor's identity and pairing; the Scenes QR
+code is hidden and the Scenes bridge is no longer published. This preference
+survives service reinstallations.
+
 The bridge starts at login. **Stop** removes its login service but preserves
 pairings. The Mac must be awake, OpenDDPM must be running, and its DDC control
 channel must survive the selected layout. An independent USB controller is not
