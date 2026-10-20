@@ -14,7 +14,9 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 - Adaptive readiness checks, a bounded transition deadline, and a local timing journal.
 - Previous verified preset and explicit retry verification.
 - Apple Shortcuts URLs and authenticated loopback automation API.
-- Optional local HomeKit television with preset inputs and scene buttons.
+- Optional Apple Home monitor with presets as inputs, connection controls and pairing QR codes.
+- Drag presets to reorder them, with a solid preview and animated placement.
+- System, light and dark appearance; settings appear in the Dock and app switcher.
 - Global hotkeys: record, change, or clear a shortcut for each preset on the Hotkeys page.
 - Standalone native DDC/CI driver; no external monitor-control app required.
 - Menu bar access to every saved preset, current status, and configuration.

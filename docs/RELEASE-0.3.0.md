@@ -34,6 +34,22 @@ interval.
   bindings are preserved. The launcher binding is optional in the stored schema,
   so older configurations remain readable.
 
+## Interface and Apple Home improvements
+
+- Drag presets to reorder them, with an opaque floating card and animated placement.
+  The saved order is shared by the remote, menu and Apple Home inputs.
+- System, light and dark appearance options apply to settings and the remote.
+  Settings appear in the Dock and app switcher while open.
+- Refined preset cards, menus, hover feedback, status banners and focus behavior.
+- Apple Home settings show a connection switch and pairing state. Advanced contains
+  restart controls, diagnostics, the Monitor QR code and pairing code, including
+  when Monitor is already paired. Existing pairings and Monitor-only settings remain intact.
+- Health reports accept timestamps with or without fractional seconds. Missing or
+  expired reports no longer leave stale connection state in the interface.
+- Restart waits for a new connected heartbeat, with progress shown until confirmed
+  or a 30-second timeout. Transient downtime no longer appears as an immediate failure.
+- Each preset offers a Shortcuts setup sheet with its stable URL and instructions.
+
 ## Validation on 2026-10-20
 
 Hardware: Dell U4025QW, native Apple Silicon DDC/CI, local connection DP.
@@ -49,6 +65,8 @@ Hardware: Dell U4025QW, native Apple Silicon DDC/CI, local connection DP.
 These are individual end-to-end measurements, not a performance guarantee. The
 firmware and macOS display rediscovery still account for most of the delay.
 
+- HomeKit health regression checks cover fractional and whole-second timestamps,
+  expiry, invalid reports, stopped service, and old/new heartbeats after restart.
 - All 4,204 existing core assertions pass, plus 32 coordinator/readiness/recovery/
   deadline/HTTP assertions and native DDC packet validation.
 - Three HomeKit tests cover stable identifiers, television and scene dispatch,

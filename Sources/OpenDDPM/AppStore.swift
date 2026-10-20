@@ -152,9 +152,11 @@ final class AppStore: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func deletePreset(_ id: UUID) { configuration.presets.removeAll { $0.id == id } }
-    func movePreset(_ id: UUID, by offset: Int) {
-        guard let index = configuration.presets.firstIndex(where: { $0.id == id }), configuration.presets.indices.contains(index + offset) else { return }
-        configuration.presets.swapAt(index, index + offset)
+    func reorderPresets(_ orderedIDs: [UUID]) {
+        guard !busy, orderedIDs.count == configuration.presets.count,
+              Set(orderedIDs) == Set(configuration.presets.map(\.id)) else { return }
+        let byID = Dictionary(uniqueKeysWithValues: configuration.presets.map { ($0.id, $0) })
+        configuration.presets = orderedIDs.compactMap { byID[$0] }
     }
     func exportConfiguration() {
         let panel = NSSavePanel(); panel.nameFieldStringValue = "OpenDDPM-presets.json"

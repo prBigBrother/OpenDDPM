@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 @MainActor
-final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let store = AppStore()
     var statusItem: NSStatusItem!
     var window: NSWindow?
@@ -82,12 +82,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         else { showRemote() }
     }
     @objc func showRemote() {
+        applyStoredAppearance()
         if remote == nil {
             let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 510, height: 620), styleMask: [.titled, .closable, .utilityWindow, .resizable], backing: .buffered, defer: false)
             panel.title = "OpenDDPM · Preset remote"
             panel.minSize = NSSize(width: 420, height: 400)
             panel.contentView = NSHostingView(rootView: PresetRemoteView(store: store))
-            panel.appearance = NSAppearance(named: .darkAqua)
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
             panel.level = .floating; panel.center(); remote = panel
         }
@@ -107,18 +107,28 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
     }
     @objc func showWindow() {
+        applyStoredAppearance()
         if window == nil {
             let created = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             created.title = "OpenDDPM"
             created.minSize = NSSize(width: 920, height: 650)
             created.contentView = NSHostingView(rootView: ConfigurationView(store: store))
-            created.appearance = NSAppearance(named: .darkAqua)
             created.isReleasedWhenClosed = false
+            created.delegate = self
             created.center()
             window = created
         }
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+    private func applyStoredAppearance() {
+        let rawValue = UserDefaults.standard.string(forKey: "OpenDDPM.appearance") ?? AppAppearance.system.rawValue
+        NSApp.appearance = AppAppearance(rawValue: rawValue)?.nsAppearance
+    }
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow, closingWindow === window else { return }
+        NSApp.setActivationPolicy(.accessory)
     }
     @objc func quit() {
         guard !store.busy else { NSSound.beep(); return }
