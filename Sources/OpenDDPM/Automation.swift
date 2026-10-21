@@ -51,12 +51,40 @@ final class LocalControlServer {
         try JSONEncoder().encode(descriptor).write(to: ControlPaths.connection, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ControlPaths.connection.path)
     }
-    private func handle(_ request: HTTPRequest) -> (Int, Any) {
+    private func handle(_ request: HTTPRequest) async -> (Int, Any) {
         guard let token = connection?.token, request.headers["authorization"] == "Bearer \(token)" else { return (401, ["error": "Unauthorized"]) }
         do {
             switch (request.method, request.path) {
             case ("GET", "/status"):
-                return (200, ["state": try object(store.transition), "busy": store.busy, "configured": store.configured, "journalError": TransitionJournal.standard.lastError as Any? ?? NSNull()])
+                let isPoweredOn = store.status?.isPoweredOn ?? true
+                return (200, [
+                    "state": try object(store.transition),
+                    "busy": store.busy,
+                    "configured": store.configured,
+                    "journalError": TransitionJournal.standard.lastError as Any? ?? NSNull(),
+                    "power": isPoweredOn ? "on" : "standby",
+                    "isPoweredOn": isPoweredOn
+                ])
+            case ("GET", "/power"):
+                let isPoweredOn = store.status?.isPoweredOn ?? true
+                return (200, ["power": isPoweredOn ? "on" : "standby", "isPoweredOn": isPoweredOn])
+            case ("POST", "/power"):
+                guard let body = try JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                    return (400, ["error": "Expected a JSON object."])
+                }
+                let on: Bool
+                if let active = body["active"] as? Bool {
+                    on = active
+                } else if let power = body["power"] as? String {
+                    on = (power.lowercased() == "on" || power.lowercased() == "active" || power == "1")
+                } else if let powerInt = body["power"] as? Int {
+                    on = (powerInt == 1)
+                } else {
+                    return (400, ["error": "Expected active (bool) or power ('on'/'standby')."])
+                }
+                guard store.configured else { return (400, ["error": "Monitor not configured."]) }
+                store.setPower(on)
+                return (200, ["accepted": true, "power": on ? "on" : "standby", "isPoweredOn": on])
             case ("GET", "/presets"):
                 return (200, store.configuration.presets.map { preset -> [String: Any] in
                     ["id": preset.id.uuidString, "name": preset.name, "detail": preset.detail, "layout": preset.layout.rawValue, "main": preset.main.rawValue, "secondary": preset.secondary.rawValue, "blocked": store.configuration.keepLocalVisible && !preset.includes(store.configuration.localInput)]

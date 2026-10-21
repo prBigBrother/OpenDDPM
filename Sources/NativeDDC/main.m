@@ -216,10 +216,14 @@ int main(int argc, const char *argv[]) {
         if ((!writing && strcmp(argv[1], "read") != 0) || argc != (writing ? 5 : 4)) return 2;
         char *end = NULL; long registerCode = strtol(argv[3], &end, 0);
         if (*end || registerCode < 0 || registerCode > 255) return 2;
-        // Limit writes to the three registers OpenDDPM needs.
-        if (writing && registerCode != 0x60 && registerCode != 0xe8 && registerCode != 0xe9) return 2;
+        // Limit writes to the registers OpenDDPM needs (inputs, layout, power).
+        if (writing && registerCode != 0x60 && registerCode != 0xe8 && registerCode != 0xe9 && registerCode != 0xd6) return 2;
         uint16_t value = 0;
-        if (writing) { long parsed = strtol(argv[4], &end, 0); if (*end || parsed < 0 || parsed > 65535) return 2; value = parsed; }
+        if (writing) {
+            long parsed = strtol(argv[4], &end, 0); if (*end || parsed < 0 || parsed > 65535) return 2;
+            if (registerCode == 0xd6 && parsed != 1 && parsed != 4) return 2;
+            value = parsed;
+        }
         NSString *serial = [NSString stringWithUTF8String:argv[2]];
         NSArray *matches = [found filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NativeDisplay *display, NSDictionary *bindings) { return [display.serial isEqualToString:serial]; }]];
         if (matches.count != 1) { fprintf(stderr, "Monitor is disconnected or its serial is ambiguous. Rediscover your monitor.\n"); return 1; }

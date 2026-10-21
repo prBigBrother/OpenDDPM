@@ -15,7 +15,7 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 - Previous verified preset and explicit retry verification.
 - Apple Shortcuts URLs and authenticated loopback automation API.
 - Optional Apple Home monitor with presets as inputs, connection controls and pairing QR codes.
-- Drag presets to reorder them, with a solid preview and animated placement.
+- Native SwiftUI settings sidebar, grouped forms, and a preset list with drag reordering.
 - System, light and dark appearance; settings appear in the Dock and app switcher.
 - Global hotkeys: record, change, or clear a shortcut for each preset on the Hotkeys page.
 - Standalone native DDC/CI driver; no external monitor-control app required.
@@ -106,8 +106,8 @@ cd OpenDDPM
 Outputs:
 
 - `build/OpenDDPM.app` — universal, ad-hoc signed app.
-- `dist/OpenDDPM-0.3.0-universal.dmg` — drag-to-Applications installer.
-- `dist/OpenDDPM-0.3.0-universal.zip` — portable application bundle.
+- `dist/OpenDDPM-0.4.0-universal.dmg` — drag-to-Applications installer.
+- `dist/OpenDDPM-0.4.0-universal.zip` — portable application bundle.
 - `dist/SHA256SUMS.txt` — asset checksums.
 
 Set `VERSION=…` when building a new version. To sign with Developer ID, set

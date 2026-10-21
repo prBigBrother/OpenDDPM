@@ -15,6 +15,7 @@ final class AppStore: ObservableObject {
     @Published var hotkeyIssues: [UUID: String] = [:]
     @Published var lastPresetID: UUID?
     @Published var transition = TransitionState()
+    @Published var isDisplaySleeping = false
     let coordinator: PresetCoordinator
     let launcher = HotkeyManager()
     var openRemote: (() -> Void)?
@@ -27,6 +28,8 @@ final class AppStore: ObservableObject {
     let homekit = HomeKitManager()
     private var recordingShortcut = false
     private var systemObservers: [NSObjectProtocol] = []
+    private var availabilityTimer: Timer?
+    private var systemSleeping = false
 
     init() {
         configurationURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -54,14 +57,27 @@ final class AppStore: ObservableObject {
         coordinator.onChange = { [weak self] in self?.synchronizeState() }
         launcher.onPress = { [weak self] _ in self?.openRemote?() }
         let workspace = NSWorkspace.shared.notificationCenter
+        systemObservers.append(workspace.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.isDisplaySleeping = true
+                self?.objectWillChange.send()
+            }
+        })
         for name in [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.willSleepNotification] {
             systemObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.coordinator.setAvailability("Mac is asleep or locked. Wake and unlock it, then retry verification.") }
+                Task { @MainActor [weak self] in
+                    if name == NSWorkspace.willSleepNotification { self?.systemSleeping = true }
+                    self?.coordinator.setAvailability("Mac is asleep or locked. Wake and unlock it, then retry verification.")
+                }
             })
         }
         for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.didWakeNotification] {
             systemObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.resumeControl() }
+                Task { @MainActor [weak self] in
+                    self?.isDisplaySleeping = false
+                    self?.systemSleeping = false
+                    self?.resumeControl()
+                }
             })
         }
         systemObservers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
@@ -71,11 +87,28 @@ final class AppStore: ObservableObject {
             Task { @MainActor [weak self] in self?.resumeControl() }
         })
         if Self.screenLocked { coordinator.setAvailability("Mac is locked. Unlock it, then retry verification.") }
+        systemObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.recoverSessionAvailability() }
+        })
+        // Unlock notifications can arrive before CGSession updates, or be missed
+        // altogether. Reconcile only a suspended session; never replay commands.
+        availabilityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.recoverSessionAvailability() }
+        }
         updateHotkeys()
     }
     private static var screenLocked: Bool { (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true }
+    private var sessionAllowsControl: Bool {
+        guard !systemSleeping, let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        return session[kCGSessionOnConsoleKey as String] as? Bool == true
+            && session["CGSSessionScreenIsLocked"] as? Bool != true
+    }
+    private func recoverSessionAvailability() {
+        guard transition.phase == "unavailable", sessionAllowsControl else { return }
+        resumeControl()
+    }
     private func resumeControl() {
-        guard !Self.screenLocked else { return }
+        guard sessionAllowsControl else { return }
         coordinator.setAvailability(nil)
         refresh()
     }
@@ -115,7 +148,67 @@ final class AppStore: ObservableObject {
         }
         if !configuration.inputConfirmed, let detected = status?.localInput { configuration.localInput = detected }
     }
-    func refresh(quietly: Bool = false) { coordinator.refresh(configuration: configuration, quietly: quietly) }
+    func refresh(quietly: Bool = false) {
+        if transition.phase == "unavailable", sessionAllowsControl {
+            coordinator.setAvailability(nil)
+        }
+        coordinator.refresh(configuration: configuration, quietly: quietly)
+    }
+    private var idleTimer: Timer?
+    private var sleepTimestamp: TimeInterval = 0
+
+    var isPoweredOn: Bool {
+        if isDisplaySleeping { return false }
+        return status?.isPoweredOn ?? true
+    }
+
+    func setPower(_ on: Bool) {
+        guard configured else { return }
+        if on {
+            stopIdleWatcher()
+            Task {
+                do {
+                    try await coordinator.setPower(true, configuration: configuration)
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
+        } else {
+            sleepTimestamp = ProcessInfo.processInfo.systemUptime
+            startIdleWatcher()
+            Task {
+                do {
+                    try await coordinator.setPower(false, configuration: configuration)
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func startIdleWatcher() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.isPoweredOn else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                guard now - self.sleepTimestamp > 1.5 else { return }
+                let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .init(rawValue: ~0)!)
+                if idle < 0.25 {
+                    self.setPower(true)
+                }
+            }
+        }
+    }
+
+    private func stopIdleWatcher() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+    }
+
+    func togglePower() {
+        setPower(!isPoweredOn)
+    }
     func previous() {
         guard let preset = previousPreset else { return }
         apply(preset)

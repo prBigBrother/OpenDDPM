@@ -24,6 +24,7 @@ export class OpenDDPMClient {
   apply(preset) { return this.call('POST', '/apply', { preset }); }
   previous() { return this.call('POST', '/previous'); }
   refresh() { return this.call('POST', '/refresh', { quiet: true }); }
+  setPower(on) { return this.call('POST', '/power', { active: on }); }
 }
 
 export function assignIdentifiers(identity, presets) {
@@ -53,15 +54,21 @@ export function buildAccessories(presets, identity, client) {
   };
   tv.getCharacteristic(C.Active).onGet(() => {
     if (!available() || ['failed', 'unverified', 'unavailable'].includes(latest.value.state.phase)) throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    return C.Active.ACTIVE;
-  }).onSet(value => {
-    // This accessory selects presets. Power commands are deliberately unsupported.
-    if (value !== C.Active.ACTIVE) throw new HapStatusError(HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
+    const isPoweredOn = latest.value.isPoweredOn ?? (latest.value.state?.monitor?.power !== 4);
+    return isPoweredOn ? C.Active.ACTIVE : C.Active.INACTIVE;
+  }).onSet(async value => {
+    const on = value === C.Active.ACTIVE;
+    try { await client.setPower(on); } catch { throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE); }
   });
   tv.getCharacteristic(C.ActiveIdentifier).onGet(() => identifiers[confirmedID()] || 0).onSet(async value => {
     const preset = presets.find(p => identifiers[p.id] === value && !p.blocked);
     if (!preset) throw new HapStatusError(HAPStatus.INVALID_VALUE_IN_REQUEST);
-    try { await client.apply(preset.id); } catch { throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE); }
+    try {
+      if (latest && (latest.value.isPoweredOn === false || latest.value.state?.monitor?.power === 4)) {
+        await client.setPower(true);
+      }
+      await client.apply(preset.id);
+    } catch { throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE); }
   });
   tv.getCharacteristic(C.RemoteKey).onSet(async value => {
     if (value !== C.RemoteKey.BACK) throw new HapStatusError(HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
@@ -93,7 +100,11 @@ export function buildAccessories(presets, identity, client) {
     television, sceneBridge, tv, identifiers, switches,
     acceptStatus(value) {
       latest = { value, received: Date.now() };
-      try { tv.updateCharacteristic(C.ActiveIdentifier, identifiers[confirmedID()] || 0); } catch { /* retain last observation, GET reports unavailable */ }
+      try {
+        const isPoweredOn = value.isPoweredOn ?? (value.state?.monitor?.power !== 4);
+        tv.updateCharacteristic(C.Active, isPoweredOn ? C.Active.ACTIVE : C.Active.INACTIVE);
+        tv.updateCharacteristic(C.ActiveIdentifier, identifiers[confirmedID()] || 0);
+      } catch { /* retain last observation, GET reports unavailable */ }
     },
     clearStatus() { latest = null; },
   };

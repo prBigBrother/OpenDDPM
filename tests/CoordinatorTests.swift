@@ -15,12 +15,18 @@ final class ModelTransport: MonitorTransport {
         if args[0] == "read" {
             if hidden { readsAfterHidden += 1; throw ControlError.message("hidden") }
             if invalidReads > 0 { invalidReads -= 1; return "65535" }
-            switch register { case 0xe9: return String(state.mode); case 0x60: return String(0x0f00 | state.main.code); default: return String(state.secondary?.code ?? 0xffff) }
+            switch register {
+            case 0xe9: return String(state.mode)
+            case 0x60: return String(0x0f00 | state.main.code)
+            case 0xd6: return String(state.power ?? 1)
+            default: return String(state.secondary?.code ?? 0xffff)
+            }
         }
         writes.append(register)
         let value = Int(args[3].dropFirst(2), radix: 16)!
         switch register {
         case 0xe9: state.mode = value
+        case 0xd6: state.power = value
         case 0x60:
             let input = VideoInput(code: value)!
             if state.secondary == input { state.secondary = state.main }
@@ -42,6 +48,7 @@ actor GatedEngine: MonitorControlling {
     var current = MonitorStatus(mode: 0, main: .dp, secondary: nil, localInput: .dp)
     func discover() -> [ConnectedMonitor] { [] }
     func status(serial: String) -> MonitorStatus { current }
+    func setPower(_ on: Bool, serial: String) async throws { current.power = on ? 1 : 4 }
     func apply(_ preset: DisplayPreset, configuration: AppConfiguration, request: UUID,
                isCurrent: @escaping @Sendable () async -> Bool,
                progress: @escaping @Sendable (String) async -> Void) async throws -> ApplyResult {

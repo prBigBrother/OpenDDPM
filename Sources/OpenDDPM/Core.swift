@@ -84,8 +84,13 @@ struct MonitorStatus: Codable, Equatable {
     var main: VideoInput
     var secondary: VideoInput?
     var localInput: VideoInput?
+    var power: Int? = 1
+    var isPoweredOn: Bool { power != 4 }
     var layout: SplitLayout? { SplitLayout.allCases.first { $0.code == mode } }
-    var description: String { "\(layout?.title ?? String(format: "Mode 0x%02X", mode)) · \(main.short)" + (mode != 0 ? " + \(secondary?.short ?? "?")" : "") }
+    var description: String {
+        let base = "\(layout?.title ?? String(format: "Mode 0x%02X", mode)) · \(main.short)" + (mode != 0 ? " + \(secondary?.short ?? "?")" : "")
+        return power == 4 ? "\(base) · Standby" : base
+    }
     func matches(_ preset: DisplayPreset) -> Bool { mode == preset.layout.code && main == preset.main && (mode == 0 || secondary == preset.secondary) }
 }
 
@@ -105,6 +110,7 @@ enum RegisterValue {
         guard (0...65535).contains(value) else { return false }
         if register == 0x60 || register == 0xe8 { return VideoInput(code: value & 0xff) != nil }
         if register == 0xe9 { return [0, 1, 2, 0x21, 0x22, 0x24, 0x27, 0x28, 0x29, 0x2a].contains(value & 0xff) }
+        if register == 0xd6 { return [1, 2, 3, 4, 5].contains(value & 0xff) }
         return true
     }
 }

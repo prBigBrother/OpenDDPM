@@ -74,6 +74,7 @@ enum ApplyResult {
 protocol MonitorControlling: Actor {
     func discover() async throws -> [ConnectedMonitor]
     func status(serial: String) async throws -> MonitorStatus
+    func setPower(_ on: Bool, serial: String) async throws
     func apply(_ preset: DisplayPreset, configuration: AppConfiguration, request: UUID,
                isCurrent: @escaping @Sendable () async -> Bool,
                progress: @escaping @Sendable (String) async -> Void) async throws -> ApplyResult
@@ -120,7 +121,14 @@ actor MonitorEngine: MonitorControlling {
         guard mode == (try readOnce(0xe9, serial: serial, deadline: deadline) & 0xff), let main = VideoInput(code: source & 0xff) else {
             throw ControlError.message("Monitor layout changed while reading its state.")
         }
-        return MonitorStatus(mode: mode, main: main, secondary: secondary, localInput: VideoInput(code: source >> 8 & 0xff))
+        let power = (try? readOnce(0xd6, serial: serial, deadline: deadline)) ?? 1
+        return MonitorStatus(mode: mode, main: main, secondary: secondary, localInput: VideoInput(code: source >> 8 & 0xff), power: power & 0xff)
+    }
+    func setPower(_ on: Bool, serial: String) async throws {
+        let deadline = now + timing.command
+        let code = on ? 1 : 4
+        _ = try command(["write", serial, "0xD6", String(format: "0x%02X", code)], deadline: deadline)
+        journal.record("power-write", fields: ["serial": serial, "power": code])
     }
     func discover() throws -> [ConnectedMonitor] { try ConnectedMonitor.decode(command(["list"], deadline: now + timing.discovery)) }
     func status(serial: String) async throws -> MonitorStatus { try await readStatus(serial: serial, deadline: now + timing.discovery) }
@@ -160,7 +168,11 @@ actor MonitorEngine: MonitorControlling {
         guard await isCurrent() else { return .superseded }
         let actions = try TransitionPlanner.plan(preset, current: before, local: configuration.localInput, keepVisible: configuration.keepLocalVisible)
         journal.record("plan", request: request, fields: ["preset": preset.name, "before": before.description, "writes": actions.map { ["register": $0.register, "value": $0.value] }])
-        if before.matches(preset) { return .verified(before) }
+        if before.power == 4 {
+            _ = try? command(["write", serial, "0xD6", "0x01"], deadline: deadline)
+            try await pause(timing.initialSettle, deadline: deadline)
+        }
+        if before.matches(preset) && before.power != 4 { return .verified(before) }
         for (index, action) in actions.enumerated() {
             guard await isCurrent() else { return .superseded }
             await progress("\(index + 1)/\(actions.count) · \(action.label)")

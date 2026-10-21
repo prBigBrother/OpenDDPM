@@ -18,15 +18,26 @@ test('HomeKit identifiers survive reordering, deletion and new presets', () => {
 test('TV inputs and scene switches dispatch complete presets through the shared API', async () => {
   const calls = [];
   const presets = [{ id: 'safe', name: 'Personal', blocked: false }, { id: 'blocked', name: 'Hidden', blocked: true }];
-  const controller = buildAccessories(presets, { seed: 'test', inputs: {} }, { apply: async id => calls.push(id), previous: async () => calls.push('previous') });
+  const controller = buildAccessories(presets, { seed: 'test', inputs: {} }, {
+    apply: async id => calls.push(id),
+    previous: async () => calls.push('previous'),
+    setPower: async on => calls.push(on ? 'power:on' : 'power:off')
+  });
   await controller.tv.getCharacteristic(C.ActiveIdentifier).handleSetRequest(controller.identifiers.safe);
   assert.deepEqual(calls, ['safe']);
   await assert.rejects(controller.tv.getCharacteristic(C.ActiveIdentifier).handleSetRequest(controller.identifiers.blocked));
   await controller.switches[0].getCharacteristic(C.On).handleSetRequest(true);
   assert.deepEqual(calls, ['safe', 'safe']);
   await assert.rejects(controller.switches[1].getCharacteristic(C.On).handleSetRequest(true));
-  controller.acceptStatus({ configured: true, busy: false, state: { observedAt: new Date().toISOString(), verifiedPresetID: 'safe', phase: 'verified' } });
+  controller.acceptStatus({ configured: true, busy: false, isPoweredOn: true, state: { observedAt: new Date().toISOString(), verifiedPresetID: 'safe', phase: 'verified' } });
   assert.equal(await controller.tv.getCharacteristic(C.ActiveIdentifier).handleGetRequest(), controller.identifiers.safe);
+  assert.equal(await controller.tv.getCharacteristic(C.Active).handleGetRequest(), C.Active.ACTIVE);
+  await controller.tv.getCharacteristic(C.Active).handleSetRequest(C.Active.INACTIVE);
+  assert.equal(calls[calls.length - 1], 'power:off');
+  controller.acceptStatus({ configured: true, busy: false, isPoweredOn: false, state: { observedAt: new Date().toISOString(), verifiedPresetID: 'safe', phase: 'verified', monitor: { power: 4 } } });
+  assert.equal(await controller.tv.getCharacteristic(C.Active).handleGetRequest(), C.Active.INACTIVE);
+  await controller.tv.getCharacteristic(C.Active).handleSetRequest(C.Active.ACTIVE);
+  assert.equal(calls[calls.length - 1], 'power:on');
   controller.acceptStatus({ configured: true, busy: true, state: { observedAt: null, verifiedPresetID: 'safe' } });
   await assert.rejects(controller.tv.getCharacteristic(C.ActiveIdentifier).handleGetRequest());
   controller.clearStatus();

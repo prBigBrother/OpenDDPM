@@ -65,6 +65,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        let powerTitle = store.isPoweredOn ? "Turn monitor off (Standby)" : "Turn monitor on"
+        let powerItem = NSMenuItem(title: powerTitle, action: #selector(togglePower), keyEquivalent: "")
+        powerItem.target = self; powerItem.isEnabled = store.configured && !store.busy; menu.addItem(powerItem)
         let refresh = NSMenuItem(title: "Refresh monitor status", action: #selector(refreshStatus), keyEquivalent: "r"); refresh.target = self; refresh.isEnabled = !store.busy; menu.addItem(refresh)
         let settings = NSMenuItem(title: "Configure OpenDDPM…", action: #selector(showWindow), keyEquivalent: ","); settings.target = self; menu.addItem(settings)
         menu.addItem(.separator())
@@ -76,6 +79,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         guard let id = sender.representedObject as? String, let preset = store.configuration.presets.first(where: { $0.id.uuidString == id }) else { return }
         store.apply(preset)
     }
+    @objc func togglePower() {
+        store.togglePower()
+    }
     @objc func statusClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp { showPresetsMenu() }
         else if remote?.isVisible == true { remote?.orderOut(nil) }
@@ -84,14 +90,18 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     @objc func showRemote() {
         applyStoredAppearance()
         if remote == nil {
-            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 510, height: 620), styleMask: [.titled, .closable, .utilityWindow, .resizable], backing: .buffered, defer: false)
-            panel.title = "OpenDDPM · Preset remote"
-            panel.minSize = NSSize(width: 420, height: 400)
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 580), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            panel.title = "Preset remote"
+            panel.toolbarStyle = .unifiedCompact
+            panel.minSize = NSSize(width: 400, height: 360)
             panel.contentView = NSHostingView(rootView: PresetRemoteView(store: store))
             panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
             panel.level = .floating; panel.center(); remote = panel
         }
         NSApp.activate(ignoringOtherApps: true); remote?.makeKeyAndOrderFront(nil)
+        // Start with the window as responder instead of automatically focusing
+        // the first action. Tab still enters the normal native keyboard loop.
+        remote?.makeFirstResponder(nil)
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "openddpm" {
@@ -109,9 +119,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     @objc func showWindow() {
         applyStoredAppearance()
         if window == nil {
-            let created = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            let created = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
             created.title = "OpenDDPM"
-            created.minSize = NSSize(width: 920, height: 650)
+            created.toolbarStyle = .unified
+            created.minSize = NSSize(width: 800, height: 560)
             created.contentView = NSHostingView(rootView: ConfigurationView(store: store))
             created.isReleasedWhenClosed = false
             created.delegate = self

@@ -109,9 +109,8 @@ struct AutomationSettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            title("Apple Home", subtitle: "Your monitor presets, in the Home app and Siri.")
-            section("", "Connection") {
+        Form {
+            Section("Connection") {
                 HStack(spacing: 14) {
                     Image(systemName: "house.fill")
                         .font(.system(size: 25))
@@ -143,7 +142,7 @@ struct AutomationSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if homekit.running && !homekit.televisionPaired {
-                section("", "Add Monitor to Home") {
+                Section("Add Monitor to Home") {
                     Text("On your iPhone, open Home → + → Add Accessory and scan this code.")
                     pairing("Monitor", image: homekit.televisionImage, paired: false)
                     if !homekit.pin.isEmpty { pairingCode }
@@ -151,65 +150,49 @@ struct AutomationSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            section("", "Keep your monitor available") {
+            Section("Keep your monitor available") {
                 Text("Keep this Mac awake and connected to the monitor. Presets that hide this Mac may interrupt control until its input is visible again.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 0) {
-                Button {
-                    advancedExpanded.toggle()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: advancedExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 12)
-                        Text("Advanced").font(.callout.weight(.medium))
-                        Spacer()
-                    }
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .accessibilityLabel(advancedExpanded ? "Collapse Advanced" : "Expand Advanced")
-                if advancedExpanded {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Apple Home uses a local background service that starts when you sign in. Setup requires Node.js 22, 24 or 26 and downloads its dependencies on first use.")
-                    if !homekit.working, let error = homekit.setupError ?? homekit.connectionError {
-                        Text(error).font(.caption.monospaced()).foregroundStyle(errorColor)
-                    }
-                    HStack {
-                        Button("Restart connection") { homekit.perform("start") }
-                            .disabled(homekit.working || !homekit.enabled || !store.configured)
-                        Button("Show service files") {
-                            NSWorkspace.shared.open(ControlPaths.directory.appendingPathComponent("homekit"))
+            Section {
+                DisclosureGroup("Advanced", isExpanded: $advancedExpanded) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Apple Home uses a local background service that starts when you sign in. Setup requires Node.js 22, 24 or 26 and downloads its dependencies on first use.")
+                        if !homekit.working, let error = homekit.setupError ?? homekit.connectionError {
+                            Text(error).font(.caption.monospaced()).foregroundStyle(errorColor)
                         }
-                    }
-                    if homekit.televisionImage != nil || !homekit.pin.isEmpty {
-                        Divider()
-                        Text("Monitor setup code").font(.headline)
-                        pairing("Monitor", image: homekit.televisionImage, paired: homekit.televisionPaired, showCode: true)
-                        if !homekit.pin.isEmpty { pairingCode }
-                        if homekit.televisionPaired {
-                            Text("Monitor is already added to Home. To share access, invite someone to your home in the Home app.")
-                                .font(.caption)
+                        HStack {
+                            Button("Restart connection") { homekit.perform("start") }
+                                .disabled(homekit.working || !homekit.enabled || !store.configured)
+                            Button("Show service files") {
+                                NSWorkspace.shared.open(ControlPaths.directory.appendingPathComponent("homekit"))
+                            }
                         }
+                        if homekit.televisionImage != nil || !homekit.pin.isEmpty {
+                            Divider()
+                            Text("Monitor setup code").font(.headline)
+                            pairing("Monitor", image: homekit.televisionImage, paired: homekit.televisionPaired, showCode: true)
+                            if !homekit.pin.isEmpty { pairingCode }
+                            if homekit.televisionPaired {
+                                Text("Monitor is already added to Home. To share access, invite someone to your home in the Home app.")
+                                    .font(.caption)
+                            }
+                        }
+                        if homekit.running && homekit.scenesEnabled {
+                            Divider()
+                            Text("Legacy Scenes accessory").font(.headline)
+                            Text("Monitor already includes every preset. The separate Scenes accessory is optional.")
+                            pairing("Scenes", image: homekit.scenesImage, paired: homekit.scenesPaired)
+                            if !homekit.scenesPaired && !homekit.pin.isEmpty { pairingCode }
+                        }
+                        Text("Power control (On / Standby) and preset selection are supported in Apple Home.")
                     }
-                    if homekit.running && homekit.scenesEnabled {
-                        Divider()
-                        Text("Legacy Scenes accessory").font(.headline)
-                        Text("Monitor already includes every preset. The separate Scenes accessory is optional.")
-                        pairing("Scenes", image: homekit.scenesImage, paired: homekit.scenesPaired)
-                        if !homekit.scenesPaired && !homekit.pin.isEmpty { pairingCode }
-                    }
-                    Text("Power control is not supported. Turning off the connection preserves your Home pairing.")
-                }
-                .font(.callout).foregroundStyle(.secondary)
-                .padding(.top, 12)
+                    .font(.callout).foregroundStyle(.secondary)
+                    .padding(.top, 12)
                 }
             }
         }
+        .formStyle(.grouped)
         .onAppear { homekit.reload() }
     }
 
@@ -225,7 +208,6 @@ struct AutomationSettingsView: View {
                 Label(copiedPin ? "Copied" : "Copy code", systemImage: copiedPin ? "checkmark" : "doc.on.doc")
             }
             .buttonStyle(.bordered)
-            .pointerCursor()
         }
     }
 

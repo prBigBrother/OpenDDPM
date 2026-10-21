@@ -64,6 +64,22 @@ final class PresetCoordinator {
         if worker == nil { readingInBackground = quietly }
         startWorker(); onChange?()
     }
+    func setPower(_ on: Bool, configuration: AppConfiguration) async throws {
+        if let reason = unavailableReason { throw ControlError.message(reason) }
+        guard !configuration.monitorSerial.isEmpty else { throw ControlError.message("Monitor serial is missing.") }
+        let serial = configuration.monitorSerial
+        try await engine.setPower(on, serial: serial)
+        if var current = state.monitor {
+            current.power = on ? 1 : 4
+            state.monitor = current
+            state.observedAt = Date()
+        } else {
+            state.observedAt = Date()
+        }
+        state.progress = on ? "Monitor turned on" : "Monitor in standby"
+        onChange?()
+        refresh(configuration: configuration, quietly: true)
+    }
     func setAvailability(_ reason: String?) {
         unavailableReason = reason
         if let reason {
