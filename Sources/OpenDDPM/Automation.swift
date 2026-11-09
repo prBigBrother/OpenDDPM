@@ -96,7 +96,7 @@ final class LocalControlServer {
                 let id = try store.request(preset)
                 return (202, ["requestID": id.uuidString, "presetID": preset.id.uuidString])
             case ("POST", "/previous"):
-                guard let preset = store.previousPreset else { return (409, ["error": "No previous verified preset."]) }
+                guard let preset = store.previousPreset else { return (409, ["error": "No alternative preset available. Add a preset that keeps this Mac visible, or allow hiding it in Setup."]) }
                 return (202, ["requestID": try store.request(preset).uuidString, "presetID": preset.id.uuidString])
             case ("POST", "/refresh"):
                 let options = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Bool]

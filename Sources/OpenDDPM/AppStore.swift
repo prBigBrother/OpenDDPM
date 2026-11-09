@@ -17,7 +17,7 @@ final class AppStore: ObservableObject {
     @Published var transition = TransitionState()
     @Published var isDisplaySleeping = false
     let coordinator: PresetCoordinator
-    var previousPreset: DisplayPreset? { configuration.presets.first { $0.id == transition.previousPresetID } }
+    var previousPreset: DisplayPreset? { transition.previousPreset(in: configuration) }
     let engine: MonitorEngine
     let monitorControls = MonitorControls()
     let monitorHDR = MonitorHDR()
@@ -52,6 +52,10 @@ final class AppStore: ObservableObject {
         let monitorEngine = MonitorEngine(helper: helperURL)
         engine = monitorEngine
         coordinator = PresetCoordinator(engine: monitorEngine)
+        coordinator.availabilityProvider = { [weak self] in
+            guard let self else { return "Mac session is unavailable. Wake and unlock it, then retry verification." }
+            return self.sessionUnavailableReason
+        }
         error = loadError
         hotkeys.onPress = { [weak self] id in
             guard let self, let preset = self.configuration.presets.first(where: { $0.id == id }) else { return }
@@ -94,7 +98,7 @@ final class AppStore: ObservableObject {
         systemObservers.append(DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.resumeControl() }
         })
-        if Self.screenLocked { coordinator.setAvailability("Mac is locked. Unlock it, then retry verification.") }
+        coordinator.setAvailability(sessionUnavailableReason)
         systemObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.recoverSessionAvailability() }
         })
@@ -125,12 +129,16 @@ final class AppStore: ObservableObject {
         }
         brightnessKeys.restore()
     }
-    private static var screenLocked: Bool { (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true }
-    private var sessionAllowsControl: Bool {
-        guard !systemSleeping, let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
-        return session[kCGSessionOnConsoleKey as String] as? Bool == true
-            && session["CGSSessionScreenIsLocked"] as? Bool != true
+    private var sessionUnavailableReason: String? {
+        guard !systemSleeping,
+              let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+              session[kCGSessionOnConsoleKey as String] as? Bool == true,
+              session["CGSSessionScreenIsLocked"] as? Bool != true else {
+            return "Mac is asleep or locked. Wake and unlock it, then retry verification."
+        }
+        return nil
     }
+    private var sessionAllowsControl: Bool { sessionUnavailableReason == nil }
     private func recoverSessionAvailability() {
         guard transition.phase == "unavailable", sessionAllowsControl else { return }
         resumeControl()

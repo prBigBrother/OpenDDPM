@@ -86,6 +86,72 @@ struct CoordinatorTests {
         for _ in 0..<200 { if !coordinator.busy { return }; try? await Task.sleep(nanoseconds: 5_000_000) }
         check(false, "worker drains")
     }
+    static func checkSessionRecovery(configuration: AppConfiguration, journal: TransitionJournal) async throws {
+        let engine = GatedEngine(), coordinator = PresetCoordinator(engine: engine, journal: journal)
+        let preset = configuration.presets[1]
+        var liveReason: String? = "Mac locked"
+        coordinator.availabilityProvider = { liveReason }
+        coordinator.setAvailability("Mac asleep")
+        // didWake arrived while locked; the subsequent unlock notification is lost.
+        coordinator.refresh(configuration: configuration)
+        check(coordinator.state.phase == "unavailable", "wake while locked stays unavailable")
+        do { _ = try coordinator.submit(preset, configuration: configuration); check(false, "live lock rejects requests") }
+        catch { check(error.localizedDescription == "Mac locked", "request checks the current lock reason") }
+        let beforeUnlock = await engine.started
+        check(beforeUnlock.isEmpty && coordinator.receipts.isEmpty, "locked requests never reach the engine")
+        liveReason = nil
+        let recovered = try coordinator.submit(preset, configuration: configuration)
+        await waitForStart(engine, 1); await engine.release(); await drain(coordinator)
+        check(coordinator.receipts.first { $0.id == recovered }?.phase == "verified", "first request after missed unlock succeeds")
+        check(coordinator.state.error == nil, "recovery clears the stale lock error")
+
+        // A fresh lock must be enforced even when its notification was also lost.
+        liveReason = "Session off console"
+        do { _ = try coordinator.submit(preset, configuration: configuration); check(false, "inactive session rejects requests") }
+        catch { check(error.localizedDescription == liveReason, "live session overrides previously available state") }
+        coordinator.refresh(configuration: configuration)
+        check(coordinator.state.phase == "unavailable", "refresh cannot clear a real session restriction")
+        liveReason = nil
+        coordinator.refresh(configuration: configuration); await drain(coordinator)
+        check(coordinator.state.phase == "verified", "refresh also recovers after a missed unlock")
+        let afterRecovery = await engine.started
+        check(afterRecovery == [preset.id], "recovery never replays a preset automatically")
+        let trace = try String(contentsOf: journal.url, encoding: .utf8)
+        check(trace.contains("request-rejected") && trace.contains("session-available") && trace.contains("session-unavailable"), "journal records session changes and rejected requests without an in-flight transition")
+    }
+    static func checkPreviousAfterLaunch(configuration: AppConfiguration, journal: TransitionJournal) async throws {
+        var pair = configuration; pair.presets = Array(configuration.presets.prefix(2))
+        let a = pair.presets[0], b = pair.presets[1]
+        let engine = GatedEngine(), coordinator = PresetCoordinator(engine: engine, journal: journal)
+        check(coordinator.state.previousPreset(in: pair)?.id == a.id, "fresh launch chooses first eligible preset before readback")
+        coordinator.refresh(configuration: pair); await drain(coordinator)
+        check(coordinator.state.verifiedPresetID == a.id && coordinator.state.previousPresetID == nil, "startup readback does not invent previous history")
+        let target = coordinator.state.previousPreset(in: pair)
+        check(target?.id == b.id, "first previous after restart selects the other preset")
+        _ = try coordinator.submit(target!, configuration: pair)
+        await waitForStart(engine, 1); await engine.release(); await drain(coordinator)
+        check(coordinator.state.verifiedPresetID == b.id, "fallback previous is verified normally")
+        let back = coordinator.state.previousPreset(in: pair)
+        check(back?.id == a.id, "second previous returns to the original preset")
+        _ = try coordinator.submit(back!, configuration: pair)
+        await waitForStart(engine, 2); await engine.release(); await drain(coordinator)
+        check(coordinator.state.verifiedPresetID == a.id, "two-preset toggle works in both directions")
+
+        var state = TransitionState(); state.verifiedPresetID = a.id; state.previousPresetID = configuration.presets[2].id
+        check(state.previousPreset(in: configuration)?.id == configuration.presets[2].id, "recorded history takes priority over fallback order")
+        check(state.previousPreset(in: pair)?.id == b.id, "deleted historical preset falls back to another configured preset")
+        state.previousPresetID = a.id
+        check(state.previousPreset(in: pair)?.id == b.id, "previous never selects the current preset")
+        pair.presets = [a]
+        check(state.previousPreset(in: pair) == nil, "one current preset has no alternative")
+        pair.presets = []
+        check(state.previousPreset(in: pair) == nil, "empty configuration has no previous preset")
+        let hidden = DisplayPreset(name: "Hidden", layout: .full, main: .hdmi, secondary: .thunderbolt)
+        pair.presets = [hidden, a, b]; state.previousPresetID = hidden.id
+        check(state.previousPreset(in: pair)?.id == b.id, "fallback skips history and alternatives that hide this Mac")
+        pair.keepLocalVisible = false
+        check(state.previousPreset(in: pair)?.id == hidden.id, "explicitly allowed hidden history remains selectable")
+    }
     static func main() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OpenDDPM-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -95,6 +161,8 @@ struct CoordinatorTests {
         let b = DisplayPreset(name: "B", layout: .equal, main: .dp, secondary: .thunderbolt)
         let c = DisplayPreset(name: "C", layout: .largeLeft, main: .dp, secondary: .thunderbolt)
         configuration.presets = [a, b, c]
+        try await checkSessionRecovery(configuration: configuration, journal: journal)
+        try await checkPreviousAfterLaunch(configuration: configuration, journal: journal)
         let gated = GatedEngine(), coordinator = PresetCoordinator(engine: gated, journal: journal)
         let first = try coordinator.submit(a, configuration: configuration)
         await waitForStart(gated, 1)
