@@ -42,7 +42,7 @@ export function buildAccessories(presets, identity, client) {
     .setCharacteristic(C.Manufacturer, 'OpenDDPM')
     .setCharacteristic(C.Model, 'Preset controller')
     .setCharacteristic(C.SerialNumber, identity.seed)
-    .setCharacteristic(C.FirmwareRevision, '0.3.0');
+    .setCharacteristic(C.FirmwareRevision, '0.5.0');
   const tv = television.addService(Service.Television, 'Monitor');
   tv.setCharacteristic(C.ConfiguredName, 'Monitor')
     .setCharacteristic(C.SleepDiscoveryMode, C.SleepDiscoveryMode.ALWAYS_DISCOVERABLE);

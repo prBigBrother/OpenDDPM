@@ -134,3 +134,14 @@ Apple entitlement. See ignored validation evidence
 `modern-osd-live-log-2026-10-22.txt`. No entitlement bypass was attempted.
 The offscreen `cacheDisplay` image did not capture the complete glass/text
 composition, so it is not sufficient evidence of the on-screen HUD appearance.
+
+## Preset Remote removed — 9 November 2026
+
+The standalone Preset Remote window and its launcher hotkey were removed.
+The quick menu's All presets action opens the existing Presets settings page.
+Reopening the app opens its main settings window. Preset-specific hotkeys,
+Apple Shortcuts preset URLs, the quick menu and HomeKit controls remain.
+The remote CLI, URL and HTTP opening routes are no longer supported.
+Legacy configurations still load: the obsolete remote shortcut is ignored
+and omitted on the next save, while saved presets and their shortcuts remain.
+Descriptions of the remote in dated release/research documents are historical.

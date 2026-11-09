@@ -6,7 +6,7 @@ cd "$ROOT"
 if [ -z "${SIGNING_IDENTITY+x}" ] && [ -f "$ROOT/local/signing/OpenDDPM.keychain-db" ]; then
   exec "$ROOT/scripts/build-local.sh" "$@"
 fi
-VERSION="${VERSION:-0.4.0}"
+VERSION="${VERSION:-0.5.0}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 APP="$BUILD_DIR/OpenDDPM.app"
 rm -rf "$APP"

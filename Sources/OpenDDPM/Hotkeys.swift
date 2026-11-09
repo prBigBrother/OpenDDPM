@@ -50,7 +50,10 @@ final class ShortcutButton: NSButton {
         bezelStyle = .rounded; target = self; action = #selector(beginRecording)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
-    @objc func beginRecording() { recording = true; recordingChanged?(true); title = "Press keys…"; window?.makeFirstResponder(self) }
+    @objc func beginRecording() {
+        guard window?.makeFirstResponder(self) == true else { return }
+        recording = true; recordingChanged?(true); title = "Press keys…"
+    }
     func updateTitle() { title = shortcut?.display ?? "Record…" }
     override func resignFirstResponder() -> Bool { if recording { recording = false; recordingChanged?(false) }; updateTitle(); return super.resignFirstResponder() }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

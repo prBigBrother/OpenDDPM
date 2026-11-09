@@ -40,6 +40,7 @@ final class PresetCoordinator {
     private var unavailableReason: String?
     private var wakeSuppressedByPowerOff = false
     var wakeConfigurationProvider: (() -> WakeConfiguration?)?
+    var beforeTransition: (() async -> Void)?
     var onChange: (() -> Void)?
     var busy: Bool { desired != nil || (worker != nil && !readingInBackground) }
     init(engine: any MonitorControlling, journal: TransitionJournal = .standard) { self.engine = engine; self.journal = journal }
@@ -150,6 +151,8 @@ final class PresetCoordinator {
                 state.phase = "applying"; state.error = nil; state.observedAt = nil
                 finish(request.id, phase: "applying"); onChange?()
                 do {
+                    await beforeTransition?()
+                    guard isCurrent(request.id) else { finish(request.id, phase: "superseded"); continue }
                     await wake(request.preset, configuration: request.configuration)
                     guard isCurrent(request.id) else { finish(request.id, phase: "superseded"); continue }
                     let result = try await engine.apply(request.preset, configuration: request.configuration, request: request.id,

@@ -52,16 +52,14 @@ struct AppConfiguration: Codable {
     var inputConfirmed = false
     var keepLocalVisible = true
     var presets = DisplayPreset.defaults
-    var remoteShortcut: PresetShortcut? = nil
-    var effectiveRemoteShortcut: PresetShortcut { remoteShortcut ?? PresetShortcut(keyCode: 49, modifiers: PresetShortcut.control | PresetShortcut.option, keyLabel: "Space") }
     func validate() throws {
         guard schemaVersion == 1 else { throw ControlError.message("This configuration uses an unsupported format.") }
         guard !monitorSerial.contains("\n"), monitorSerial.count < 200, presets.count <= 100 else { throw ControlError.message("Invalid monitor or preset data.") }
         guard Set(presets.map(\.id)).count == presets.count else { throw ControlError.message("Preset IDs must be unique.") }
         for preset in presets { try preset.validate() }
-        let shortcuts = presets.compactMap(\.shortcut) + [remoteShortcut].compactMap { $0 }
+        let shortcuts = presets.compactMap(\.shortcut)
         for shortcut in shortcuts { try shortcut.validate() }
-        guard Set(shortcuts.map(\.identity)).count == shortcuts.count else { throw ControlError.message("Presets and the remote must use different hotkeys.") }
+        guard Set(shortcuts.map(\.identity)).count == shortcuts.count else { throw ControlError.message("Presets must use different hotkeys.") }
     }
 }
 

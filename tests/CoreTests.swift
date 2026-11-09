@@ -112,6 +112,20 @@ struct CoreTests {
         try ConfigurationFile.save(bindings, to: path)
         let restoredBindings = try ConfigurationFile.load(path)
         check(restoredBindings.presets[0].shortcut == shortcut, "Bindings persist with presets")
+        var oldRemoteConfiguration = try JSONSerialization.jsonObject(with: JSONEncoder().encode(bindings)) as! [String: Any]
+        oldRemoteConfiguration["remoteShortcut"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(shortcut))
+        try JSONSerialization.data(withJSONObject: oldRemoteConfiguration).write(to: path)
+        var withoutRemote = try ConfigurationFile.load(path)
+        check(withoutRemote.presets == bindings.presets && withoutRemote.localInput == bindings.localInput,
+              "Retired remote shortcut is ignored without losing presets or input configuration")
+        withoutRemote.presets[1].shortcut = PresetShortcut(keyCode: 49, modifiers: PresetShortcut.control | PresetShortcut.option, keyLabel: "Space")
+        try withoutRemote.validate()
+        try ConfigurationFile.save(withoutRemote, to: path)
+        let migrated = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+        check(migrated["remoteShortcut"] == nil, "Saving drops the retired remote setting")
+        let migratedConfiguration = try ConfigurationFile.load(path)
+        check(migratedConfiguration.presets[1].shortcut == withoutRemote.presets[1].shortcut,
+              "Former remote launcher combination is available to preset hotkeys")
         let legacyData = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppConfiguration())) as! [String: Any]
         var legacy = legacyData
         legacy["presets"] = (legacy["presets"] as! [[String: Any]]).map { row in var result = row; result.removeValue(forKey: "shortcut"); return result }

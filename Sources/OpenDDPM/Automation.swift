@@ -26,7 +26,7 @@ final class LocalControlServer {
         try FileManager.default.createDirectory(at: ControlPaths.directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let lockURL = ControlPaths.directory.appendingPathComponent("application.lock")
         lockFD = Darwin.open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw ControlError.message("OpenDDPM is already running. Use its preset remote.") }
+        guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw ControlError.message("OpenDDPM is already running. Use its menu bar icon.") }
         let descriptor: ControlConnection
         if let data = try? Data(contentsOf: ControlPaths.connection), let saved = try? JSONDecoder().decode(ControlConnection.self, from: data), saved.token.count >= 64 {
             descriptor = ControlConnection(port: ControlPaths.port, token: saved.token)
@@ -102,7 +102,6 @@ final class LocalControlServer {
                 let options = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Bool]
                 store.refresh(quietly: options?["quiet"] == true)
                 return (202, ["accepted": true])
-            case ("POST", "/remote"): store.openRemote?(); return (200, ["opened": true])
             default:
                 if request.method == "GET", request.path.hasPrefix("/requests/"), let id = UUID(uuidString: String(request.path.dropFirst(10))), let receipt = store.coordinator.receipts.first(where: { $0.id == id }) {
                     return (200, try object(receipt))
@@ -156,7 +155,7 @@ private final class ControlHTTPSession: @unchecked Sendable {
 }
 
 enum ControlCLI {
-    static let commands = ["--list-presets", "--status", "--apply", "--previous", "--remote"]
+    static let commands = ["--list-presets", "--status", "--apply", "--previous"]
     static func runIfRequested() -> Bool {
         let args = CommandLine.arguments
         guard let command = args.dropFirst().first, commands.contains(command) else { return false }
@@ -172,7 +171,7 @@ enum ControlCLI {
                 guard args.count >= 3, !args[2].hasPrefix("--") else { throw ControlError.message("Usage: OpenDDPM --apply PRESET_UUID_OR_NAME [--wait]") }
                 result = try call("POST", "/apply", body: ["preset": args[2]])
             case "--previous": result = try call("POST", "/previous")
-            default: result = try call("POST", "/remote")
+            default: throw ControlError.message("Unknown command.")
             }
             if args.contains("--wait"), let id = (result as? [String: Any])?["requestID"] as? String {
                 let until = Date().addingTimeInterval(30)

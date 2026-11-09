@@ -7,11 +7,15 @@ final class QueueTransport: MonitorTransport {
     var failBrightnessReads = false
     var ignoreBrightnessWrites = false
     var brightnessOperations = [String]()
+    var writes = [(register: Int, value: Int)]()
+    var failWrites = Set<Int>()
     func run(_ args: [String], timeout: TimeInterval) throws -> String {
         if args[0] == "list" { discoveries += 1; return "[{\"serial\":\"TEST\",\"displayID\":42}]" }
         Thread.sleep(forTimeInterval: 0.04)
         let reg = Int(args[2].dropFirst(2), radix: 16)!
         if args[0] == "write" {
+            writes.append((reg, Int(args[3])!))
+            if failWrites.contains(reg) { throw ControlError.message("Write failed") }
             if reg == 0x10 {
                 brightnessWrites += 1; brightnessOperations.append("write:\(args[3])")
                 if !ignoreBrightnessWrites { registers[reg] = Int(args[3])! }
@@ -202,6 +206,117 @@ final class TestBrightnessChanges: BrightnessChangeNotifying {
         for _ in 0..<60 where fast.working { try await Task.sleep(nanoseconds: 30_000_000) }
         precondition(fast.values[0x10] == 14 && fast.brightnessPreview == nil && fast.failures[0x10] != nil && verified.last == 14,
                      "An ignored write must revert the preview and expose failure, never publish a false confirmation")
-        print("PASS: HDR preserves keyboard and slider brightness; repeats coalesce; refresh is throttled; automatic brightness blocks queued adjustments; native notifications preserve fractions without fast polling; fallback and cancellation work")
+        let queuedTransport = QueueTransport()
+        let queuedEngine = MonitorEngine(transport: queuedTransport, timing: EngineTiming(), journal: journal)
+        let queued = MonitorControls()
+        queued.connect(serial: "TEST", engine: queuedEngine)
+        var mayExecute = true
+        queued.acceptsChanges = { true }
+        queued.allowsControl = { mayExecute }
+        await queued.refresh()
+        queued.set(.contrast, to: 60)
+        queued.set(.volume, to: 20)
+        queued.set(.contrast, to: 65)
+        queued.set(.volume, to: 45)
+        precondition(queued.displayedValue(for: .contrast) == 65 && queued.displayedValue(for: .volume) == 45)
+        precondition(queued.values[0x12] == 75 && queued.values[0x62] == 30, "Previews must not claim monitor confirmation")
+        for _ in 0..<80 where queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(queued.values[0x12] == 65 && queued.values[0x62] == 45 && queued.requestedValues.isEmpty)
+        precondition(queuedTransport.writes.map(\.register) == [0x12, 0x62, 0x12] && queuedTransport.writes.map(\.value) == [60, 45, 65],
+                     "Different controls execute in order; repeated pending values coalesce")
+
+        mayExecute = false // A preset transition owns the monitor.
+        let pausedWrites = queuedTransport.writes.count
+        queued.set(.contrast, to: 55)
+        queued.set(.volume, to: 35)
+        queued.set(.brightness, to: 42)
+        precondition(!queued.working && queued.displayedValue(for: .contrast) == 55 && queued.brightnessPreview == 42)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        precondition(queuedTransport.writes.count == pausedWrites, "Queued edits must wait for the preset to finish")
+        mayExecute = true
+        queued.resumePendingChanges()
+        for _ in 0..<100 where queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(queued.values[0x12] == 55 && queued.values[0x62] == 35 && queued.values[0x10] == 42)
+
+        mayExecute = false
+        queued.setAutoBrightness(true)
+        queued.setAutoRange(2)
+        queued.setAutoBrightness(false)
+        precondition(!queued.autoBrightness && queued.displayedValue(for: .automatic) == 129,
+                     "Queued auto-brightness fields must compose without overwriting one another")
+        mayExecute = true
+        queued.resumePendingChanges()
+        for _ in 0..<80 where queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(queued.values[0x66] == 129 && !queued.autoBrightness)
+
+        queuedTransport.failWrites.insert(0x12)
+        queued.set(.contrast, to: 20)
+        queued.set(.volume, to: 50)
+        for _ in 0..<80 where queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(queued.values[0x12] == 55 && queued.failures[0x12] != nil && queued.message != nil,
+                     "Failed edits retain the confirmed value and a visible error")
+        precondition(queued.values[0x62] == 50 && queued.requestedValues.isEmpty, "A failed command must not stop later edits")
+        queuedTransport.failWrites.remove(0x12)
+
+        var hdrActions = [Bool]()
+        let beforeHDRQueue = queuedTransport.writes.count
+        queued.enqueueHDR(true) {
+            hdrActions.append(true)
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            queued.updateHDR(true)
+        }
+        queued.set(.contrast, to: 40)
+        queued.enqueueHDR(false) { hdrActions.append(false); queued.updateHDR(false) }
+        precondition(queued.hdrPreview == false && queued.displayedValue(for: .contrast) == 40)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(queuedTransport.writes.count == beforeHDRQueue, "Picture writes must wait for active HDR work")
+        for _ in 0..<80 where queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(hdrActions == [true, false] && queued.hdrEnabled == false && queued.hdrPreview == nil && queued.values[0x12] == 40)
+        precondition(queued.failures[0x12] == nil && queued.message == nil, "A successful retry clears its own error")
+
+        let beforeInterruptedBrightness = queuedTransport.brightnessWrites
+        queued.set(.brightness, to: 32)
+        for _ in 0..<50 where queuedTransport.brightnessWrites == beforeInterruptedBrightness {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        mayExecute = false
+        for _ in 0..<50 where queued.working { try await Task.sleep(nanoseconds: 10_000_000) }
+        precondition(!queued.working && queued.brightnessPreview == 32 && queued.values[0x10] == 42,
+                     "A preset interrupting brightness readback must retain its unconfirmed target")
+        queued.set(.volume, to: 55)
+        mayExecute = true; queued.resumePendingChanges()
+        for _ in 0..<100 where queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(queued.values[0x10] == 32 && queued.values[0x62] == 55 && queued.requestedValues.isEmpty,
+                     "Interrupted brightness and later edits resume after the preset")
+
+        mayExecute = false
+        queued.set(.contrast, to: 35)
+        queued.connect(serial: "TEST", engine: queuedEngine, displayID: 43)
+        precondition(queued.displayedValue(for: .contrast) == 35, "A reconnected display ID must retain edits for the same serial")
+        mayExecute = true; queued.resumePendingChanges()
+        for _ in 0..<80 where queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(queued.values[0x12] == 35)
+        mayExecute = false
+        queued.set(.volume, to: 15)
+        let beforeMonitorChange = queuedTransport.writes.count
+        queued.connect(serial: "OTHER", engine: queuedEngine)
+        mayExecute = true; queued.resumePendingChanges()
+        precondition(queued.requestedValues.isEmpty && queuedTransport.writes.count == beforeMonitorChange,
+                     "Queued edits must never transfer to another monitor")
+        var externalBusy = false
+        queued.allowsControl = { mayExecute && !externalBusy }
+        queued.enqueueHDR(true) {
+            externalBusy = true
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            externalBusy = false
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        queued.connect(serial: "OTHER", engine: queuedEngine, displayID: 44)
+        queued.set(.contrast, to: 28)
+        precondition(!queued.working && queued.displayedValue(for: .contrast) == 28)
+        for _ in 0..<100 where externalBusy || queued.working { try await Task.sleep(nanoseconds: 30_000_000) }
+        precondition(queued.values[0x12] == 28 && queued.requestedValues.isEmpty,
+                     "Completion of pre-reconnect HDR work must resume the current queue without publishing stale state")
+        print("PASS: all picture controls and HDR serialize, coalesce and retain previews; busy presets defer edits; auto fields compose; errors do not stop the queue; reconnects preserve the selected target; existing native brightness behavior passes")
     }
 }

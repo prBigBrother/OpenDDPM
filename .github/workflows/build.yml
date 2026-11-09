@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,6 +19,8 @@ jobs:
         run: npm ci --prefix homekit --ignore-scripts && node --test homekit/bridge.test.mjs
       - name: Core tests
         run: ./scripts/test.sh
+      - name: Bluetooth wake retry policy
+        run: python3 firmware/bt-wakeup/tests/check_retry_policy.py
       - name: Build universal app
         run: ./scripts/build.sh
       - name: Package

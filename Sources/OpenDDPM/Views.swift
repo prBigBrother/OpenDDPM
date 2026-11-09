@@ -168,10 +168,6 @@ struct ConfigurationView: View {
                         Label("Toggle sidebar", systemImage: "sidebar.left")
                     }
                     .help("Toggle sidebar")
-                    Button { store.openRemote?() } label: {
-                        Label("Open preset remote", systemImage: "rectangle.on.rectangle")
-                    }
-                    .help("Open preset remote")
                     Button { store.refresh() } label: {
                         Label("Refresh monitor status", systemImage: "arrow.clockwise")
                     }
@@ -510,28 +506,10 @@ private struct HotkeysView: View {
 
     var body: some View {
         Form {
-            Section {
-                LabeledContent("Open preset remote") {
-                    ShortcutRecorder(preset: DisplayPreset(id: AppStore.remoteID, name: "Preset remote", layout: .full, main: .dp, secondary: .hdmi, shortcut: store.configuration.effectiveRemoteShortcut), capture: { store.setRemoteShortcut($0) }, recordingChanged: { store.shortcutRecording($0) })
-                        .frame(width: 145, height: 28)
-                    Button("Reset") {
-                        store.setRemoteShortcut(PresetShortcut(keyCode: 49, modifiers: PresetShortcut.control | PresetShortcut.option, keyLabel: "Space"))
-                    }
-                }
-                if let issue = store.hotkeyIssues[AppStore.remoteID] { StatusBanner(message: issue) }
-            } header: { Text("Preset remote") }
-            footer: { Text("Click Record, then press a key with Control, Option, or Command. Escape cancels.") }
             Section("Preset shortcuts") {
                 if store.configuration.presets.isEmpty { Text("Create a preset to assign a shortcut.").foregroundStyle(.secondary) }
                 ForEach(store.configuration.presets) { preset in
-                    LabeledContent {
-                        ShortcutRecorder(preset: preset, capture: { store.setShortcut($0, for: preset.id) }, recordingChanged: { store.shortcutRecording($0) })
-                            .frame(width: 145, height: 28)
-                        IconButton(icon: "xmark.circle", help: "Clear hotkey for \(preset.name)", role: .destructive) {
-                            store.setShortcut(nil, for: preset.id)
-                        }
-                        .disabled(preset.shortcut == nil)
-                    } label: {
+                    HStack(alignment: .center, spacing: 16) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(preset.name)
                             Text(preset.detail).font(.caption).foregroundStyle(.secondary)
@@ -545,10 +523,23 @@ private struct HotkeysView: View {
                                 Text("Active globally").font(.caption).foregroundStyle(.secondary)
                             }
                         }
+                        Spacer(minLength: 16)
+                        HStack(alignment: .center, spacing: 8) {
+                            ShortcutRecorder(preset: preset, capture: { store.setShortcut($0, for: preset.id) }, recordingChanged: { store.shortcutRecording($0) })
+                                .frame(width: 145, height: 28)
+                            IconButton(icon: "xmark.circle", help: "Clear hotkey for \(preset.name)", role: .destructive) {
+                                store.setShortcut(nil, for: preset.id)
+                            }
+                            .frame(width: 28, height: 28)
+                            .disabled(preset.shortcut == nil)
+                        }
+                        .fixedSize()
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
                 }
             }
-            .disabled(store.busy)
+            Text("Click Record, then press a key with Control, Option, or Command. Escape cancels.").font(.caption).foregroundStyle(.secondary)
             Text("No Accessibility or Input Monitoring permission is needed.").font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)

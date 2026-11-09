@@ -8,7 +8,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     var statusItem: NSStatusItem!
     var window: NSWindow?
     var quickPopover: NSPopover?
-    var remote: NSPanel?
     var contextMenu: NSMenu?
     var controlServer: LocalControlServer?
     var subscriptions = Set<AnyCancellable>()
@@ -39,7 +38,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         statusItem.button?.image?.isTemplate = true
         statusItem.button?.toolTip = "OpenDDPM · Monitor presets"
         store.openWindow = { [weak self] in self?.showWindow() }
-        store.openRemote = { [weak self] in self?.showRemote() }
         store.quitApplication = { [weak self] in self?.quit() }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(statusClicked)
@@ -51,7 +49,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         if !store.configured || CommandLine.arguments.contains("--show-window") { showWindow() }
         store.refresh()
-        if CommandLine.arguments.contains("--show-remote") { showRemote() }
     }
     func updateMenu() {
         let menu = NSMenu()
@@ -113,27 +110,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
 
-    @objc func showRemote() {
-        quickPopover?.performClose(nil)
-        applyStoredAppearance()
-        if remote == nil {
-            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 580), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-            panel.title = "Preset remote"
-            panel.toolbarStyle = .unifiedCompact
-            panel.minSize = NSSize(width: 400, height: 360)
-            panel.contentView = NSHostingView(rootView: PresetRemoteView(store: store))
-            panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
-            panel.level = .floating; panel.center(); remote = panel
-        }
-        NSApp.activate(ignoringOtherApps: true); remote?.makeKeyAndOrderFront(nil)
-        // Start with the window as responder instead of automatically focusing
-        // the first action. Tab still enters the normal native keyboard loop.
-        remote?.makeFirstResponder(nil)
-    }
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "openddpm" {
-            if url.host == "remote" { showRemote() }
-            else if url.host == "previous" { store.previous() }
+            if url.host == "previous" { store.previous() }
             else if url.host == "apply", let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value,
                     let preset = store.configuration.presets.first(where: { $0.id.uuidString.lowercased() == id.lowercased() }) { store.apply(preset) }
         }
@@ -171,13 +150,18 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         guard !store.busy else { NSSound.beep(); return }
         NSApp.terminate(nil)
     }
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { if store.configured { showRemote() } else { showWindow() }; return true }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
 }
 
 @main
 struct OpenDDPMApplication {
     @MainActor static func main() {
         if ControlCLI.runIfRequested() { return }
+        let launchOptions: Set<String> = ["--show-menu", "--show-window", "--diagnose"]
+        if let unknown = CommandLine.arguments.dropFirst().first(where: { $0.hasPrefix("--") && !launchOptions.contains($0) }) {
+            fputs("Unknown option: \(unknown)\n", stderr)
+            exit(2)
+        }
         if CommandLine.arguments.contains("--diagnose") {
             let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/openddpm-ddc")
             do {

@@ -17,8 +17,6 @@ final class AppStore: ObservableObject {
     @Published var transition = TransitionState()
     @Published var isDisplaySleeping = false
     let coordinator: PresetCoordinator
-    let launcher = HotkeyManager()
-    var openRemote: (() -> Void)?
     var previousPreset: DisplayPreset? { configuration.presets.first { $0.id == transition.previousPresetID } }
     let engine: MonitorEngine
     let monitorControls = MonitorControls()
@@ -60,8 +58,12 @@ final class AppStore: ObservableObject {
             self.apply(preset)
         }
         coordinator.wakeConfigurationProvider = { [weak self] in self?.configuration.wakeup }
+        coordinator.beforeTransition = { [weak self] in
+            while self?.monitorControls.working == true || self?.monitorHDR.busy == true {
+                do { try await Task.sleep(nanoseconds: 25_000_000) } catch { return }
+            }
+        }
         coordinator.onChange = { [weak self] in self?.synchronizeState() }
-        launcher.onPress = { [weak self] _ in self?.openRemote?() }
         let workspace = NSWorkspace.shared.notificationCenter
         systemObservers.append(workspace.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -108,7 +110,7 @@ final class AppStore: ObservableObject {
         connectMonitorControls()
         brightnessKeys.canHandle = { [weak self] in
             guard let self else { return false }
-            return self.monitorControls.allowsControl?() == true && self.monitorControls.values[0x10] != nil && self.monitorControls.canAdjustBrightness
+            return self.monitorControls.canAcceptChanges && self.monitorControls.displayedBrightness != nil && self.monitorControls.canAdjustBrightness
         }
         brightnessKeys.onStep = { [weak self] in self?.monitorControls.stepBrightness($0) }
         brightnessKeys.onDiagnostic = { decision in
@@ -148,20 +150,16 @@ final class AppStore: ObservableObject {
     func updateHotkeys() {
         let enabled = configured && !recordingShortcut ? configuration.presets.filter { !configuration.keepLocalVisible || $0.includes(configuration.localInput) } : []
         hotkeyIssues = hotkeys.synchronize(enabled)
-        let remote = DisplayPreset(id: Self.remoteID, name: "Preset remote", layout: .full, main: .dp, secondary: .hdmi, shortcut: configuration.effectiveRemoteShortcut)
-        let issues = launcher.synchronize(recordingShortcut ? [] : [remote])
-        if let issue = issues[Self.remoteID] { hotkeyIssues[Self.remoteID] = issue }
     }
     func shortcutRecording(_ active: Bool) { recordingShortcut = active; updateHotkeys() }
     func setShortcut(_ shortcut: PresetShortcut?, for id: UUID) {
-        guard !busy, let index = configuration.presets.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = configuration.presets.firstIndex(where: { $0.id == id }) else { return }
         do {
             var candidate = configuration; candidate.presets[index].shortcut = shortcut
             try candidate.validate()
             configuration = candidate
         } catch { self.error = error.localizedDescription }
     }
-    static let remoteID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     func synchronizeState() {
         transition = coordinator.state
         busy = coordinator.busy
@@ -243,23 +241,32 @@ final class AppStore: ObservableObject {
         guard let preset = previousPreset else { return }
         apply(preset)
     }
-    func setRemoteShortcut(_ shortcut: PresetShortcut) {
-        do { var candidate = configuration; candidate.remoteShortcut = shortcut; try candidate.validate(); configuration = candidate }
-        catch { self.error = error.localizedDescription }
-    }
     func refreshMonitorHDR() {
         guard !monitorHDR.busy else { return }
         let id = monitors.first { $0.serial == configuration.monitorSerial }?.displayID
         monitorHDR.refresh(displayID: id)
         monitorControls.updateHDR(monitorHDR.supported ? monitorHDR.enabled : nil)
     }
+    func setHDR(_ enabled: Bool) {
+        let serial = configuration.monitorSerial
+        monitorControls.enqueueHDR(enabled) { [weak self] in
+            guard let self, self.configuration.monitorSerial == serial else { return }
+            await self.monitorHDR.setEnabled(enabled) { desired in try await self.engine.prepareHDR(desired, serial: serial) }
+            self.refreshMonitorHDR()
+            await self.monitorControls.refresh()
+        }
+    }
     func connectMonitorControls() {
         monitorControls.connect(serial: configuration.monitorSerial, engine: engine, displayID: monitors.first { $0.serial == configuration.monitorSerial }?.displayID)
         monitorControls.refreshHDR = { [weak self] in self?.refreshMonitorHDR() }
         refreshMonitorHDR()
+        monitorControls.acceptsChanges = { [weak self] in
+            guard let self else { return false }
+            return self.configured && self.sessionAllowsControl && self.isPoweredOn
+        }
         monitorControls.allowsControl = { [weak self] in
             guard let self else { return false }
-            return self.configured && !self.busy && !self.monitorControls.suspended && self.sessionAllowsControl && self.isPoweredOn
+            return self.configured && !self.busy && !self.monitorHDR.busy && !self.monitorControls.suspended && self.sessionAllowsControl && self.isPoweredOn
         }
     }
     func selectMonitor(_ serial: String) {

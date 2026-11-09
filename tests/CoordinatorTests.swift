@@ -110,6 +110,22 @@ struct CoordinatorTests {
         check(started == [a.id, c.id], "pending intermediate selection is skipped")
         check(maxActive == 1, "only one transition executes")
         check(coordinator.state.verifiedPresetID == c.id && coordinator.state.requestID == final, "last request is the confirmed result")
+        let waitingEngine = GatedEngine()
+        let waitingCoordinator = PresetCoordinator(engine: waitingEngine, journal: journal)
+        var controlsWorking = true
+        waitingCoordinator.beforeTransition = {
+            while controlsWorking { try? await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        _ = try waitingCoordinator.submit(a, configuration: configuration)
+        try await Task.sleep(nanoseconds: 25_000_000)
+        let beforeControlsFinish = await waitingEngine.started
+        check(beforeControlsFinish.isEmpty, "preset waits for the active picture/HDR operation")
+        _ = try waitingCoordinator.submit(b, configuration: configuration)
+        controlsWorking = false
+        await waitForStart(waitingEngine, 1)
+        let afterControlsFinish = await waitingEngine.started
+        check(afterControlsFinish == [b.id], "latest preset wins while monitor controls finish")
+        await waitingEngine.release(); await drain(waitingCoordinator)
         check(coordinator.receipts.first(where: { $0.id == first })?.phase == "superseded", "active superseded request remains terminal")
         check(coordinator.receipts.first(where: { $0.id == second })?.phase == "superseded", "queued superseded request remains terminal")
         _ = try coordinator.submit(a, configuration: configuration); await waitForStart(gated, 3); await gated.release(); await drain(coordinator)
@@ -126,7 +142,7 @@ struct CoordinatorTests {
         coordinator.setAvailability(nil); coordinator.refresh(configuration: configuration); await drain(coordinator)
         check(coordinator.state.phase == "verified", "wake refresh restores a confirmed state without an automatic preset write")
         coordinator.refresh(configuration: configuration, quietly: true)
-        check(!coordinator.busy, "background HomeKit readback does not flash the preset remote busy state")
+        check(!coordinator.busy, "background HomeKit readback does not flash the UI busy state")
         for _ in 0..<5 { await Task.yield() }
         var blocked = configuration
         let hiddenPreset = DisplayPreset(name: "Hidden", layout: .full, main: .hdmi, secondary: .thunderbolt)

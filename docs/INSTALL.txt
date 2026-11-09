@@ -1,4 +1,4 @@
-OpenDDPM 0.2.1
+OpenDDPM 0.5.0
 
 1. Drag OpenDDPM.app to Applications.
 2. Open OpenDDPM. Look for the split-monitor icon in the menu bar.
@@ -13,7 +13,7 @@ Requirements: macOS 13+, Apple Silicon or Intel, supported Dell monitor with
 DDC/CI enabled. U4025QW is the hardware-validated model on Apple Silicon.
 The Intel driver is compiled but has not been tested on physical Intel hardware.
 
-This build is ad-hoc signed, not Apple notarized. On a downloaded copy,
+This build is not Apple Developer ID signed or Apple notarized. On a downloaded copy,
 macOS may block first launch. Attempt to open it, then use System Settings >
 Privacy & Security > Open Anyway and confirm. Do not disable Gatekeeper.
 
@@ -23,6 +23,15 @@ back after hiding this Mac can require the monitor joystick or a separate
 USB control connection. Shortcuts work while OpenDDPM is running; choose
 Launch at login if you want them available after signing in.
 
-Existing 0.1.0 configuration is preserved. Source and releases:
+Monitor controls include brightness, contrast, speaker volume, color and HDR
+where supported by the selected connection. Brightness keys include NuPhy's
+legacy F14/F15 commands. Enable Keyboard brightness in Monitor controls and
+grant Accessibility access when macOS requests it. Preset hotkeys do not need
+this permission. Pending monitor edits run sequentially without disabling the
+other controls.
+
+The separate Preset Remote window has been removed. All presets in the menu
+opens the existing Presets page. Saved presets, hotkeys and input settings
+are preserved when upgrading. Source and releases:
 https://github.com/prBigBrother/OpenDDPM
 OpenDDPM and its native driver's credited upstream code are MIT licensed.

@@ -9,7 +9,11 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 
 ## Features
 
-- Compact preset remote: click the menu bar icon or press Control–Option–Space.
+- Quick monitor controls and preset switching from the menu bar icon.
+- Brightness, contrast, speaker volume, color presets and HDR controls where supported.
+- Editable monitor controls with queued writes and verified readback.
+- Keyboard brightness, including NuPhy F14/F15, with a native Liquid Glass indicator on macOS 26+.
+- Optional ESP32 Bluetooth wake support with per-input Mac assignments.
 - Latest selection wins: change your target while switching without overlapping monitor commands.
 - Adaptive readiness checks, a bounded transition deadline, and a local timing journal.
 - Previous verified preset and explicit retry verification.
@@ -19,7 +23,7 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 - System, light and dark appearance; settings appear in the Dock and app switcher.
 - Global hotkeys: record, change, or clear a shortcut for each preset on the Hotkeys page.
 - Standalone native DDC/CI driver; no external monitor-control app required.
-- Menu bar access to every saved preset, current status, and configuration.
+- Quick presets in the menu bar, with **All presets…** opening the complete preset list.
 - Visual preset editor: full screen, 50/50, 75/25, 25/75, and small/large PIP.
 - DisplayPort, HDMI, and Thunderbolt input assignment.
 - First-run setup discovers monitors and identifies this Mac's physical input.
@@ -37,7 +41,7 @@ Picture-in-Picture layout and assigns each video source to the correct region.
    cable connected to this Mac, and confirm it.
 4. Pick a preset from the menu bar or create your own in the configuration window.
 
-**Release signing:** this release is ad-hoc signed and is not Apple notarized.
+**Release signing:** this release is not Apple Developer ID signed or Apple notarized.
 macOS may block a downloaded copy on first launch. After attempting to open it,
 use **System Settings → Privacy & Security → Open Anyway** and confirm. Do not
 disable Gatekeeper. Developer ID signing/notarization can be added when an Apple
@@ -46,8 +50,10 @@ Developer certificate is available.
 ## Native monitor control and hotkeys
 
 OpenDDPM includes its own small DDC/CI driver. Apple Silicon uses IOAVService;
-Intel uses IOI2CInterface. Neither transport needs another monitor-control app,
-a paid license, Accessibility permission, or Input Monitoring permission.
+Intel uses IOI2CInterface. Neither transport needs another monitor-control app
+or a paid license. Monitor commands and preset hotkeys do not require
+Accessibility or Input Monitoring permission. Intercepting keyboard brightness
+keys requires Accessibility access.
 The Apple Silicon discovery/transport implementation credits the MIT-licensed
 [m1ddc](https://github.com/waydabber/m1ddc) project. See the bundled
 [notice](Vendor/NativeDDC/NOTICE.md) for attribution and API limitations.
@@ -77,7 +83,7 @@ before the next target is planned from actual state. Readiness checks and helper
 calls share a 25-second transition deadline. Monitor firmware and macOS display
 rediscovery still determine the physical switching time.
 
-The remote distinguishes selected, applying, verified and unverified states.
+The app distinguishes selected, applying, verified and unverified states.
 A hidden Mac input is explicitly unverified. **Previous preset** returns to the
 last confirmed preset when the control channel is available. The local journal
 at `~/Library/Logs/OpenDDPM/transitions.jsonl` records request IDs, the write plan,
@@ -90,12 +96,14 @@ Returning may require the monitor joystick or an independent USB control path.
 
 ## Build from source
 
-Requirements: macOS and Apple's Command Line Tools, or Xcode, with Swift 5.9+.
+Requirements: Xcode 26 or later with the macOS 26+ SDK. Built applications
+run on macOS 13 or later; the glass indicator uses an older material fallback
+before macOS 26.
 The build has no package-manager or network dependencies. Native driver source
 and its third-party license notices are included in this repository.
 
 ```sh
-xcode-select --install  # if Apple's tools are not already installed
+# Install Xcode 26 or later and select its command-line tools first.
 git clone https://github.com/prBigBrother/OpenDDPM.git
 cd OpenDDPM
 ./scripts/test.sh
@@ -105,9 +113,10 @@ cd OpenDDPM
 
 Outputs:
 
-- `build/OpenDDPM.app` — universal, ad-hoc signed app.
-- `dist/OpenDDPM-0.4.0-universal.dmg` — drag-to-Applications installer.
-- `dist/OpenDDPM-0.4.0-universal.zip` — portable application bundle.
+- `build/OpenDDPM.app` — universal signed app; ad-hoc signing is the default
+  unless a signing identity or an existing local development identity is configured.
+- `dist/OpenDDPM-0.5.0-universal.dmg` — drag-to-Applications installer.
+- `dist/OpenDDPM-0.5.0-universal.zip` — portable application bundle.
 - `dist/SHA256SUMS.txt` — asset checksums.
 
 Set `VERSION=…` when building a new version. To sign with Developer ID, set
@@ -140,11 +149,11 @@ OpenDDPM is independent software and is not affiliated with Dell.
 
 ## Apple Shortcuts and scripting
 
-Right-click a preset in the remote and choose **Copy Apple Shortcuts URL**. Use
-that URL with the **URL** and **Open URLs** actions in Apple Shortcuts. URLs have
+In **Settings → Presets**, choose **Set up Apple Shortcut…** for a preset. Use
+its URL with the **URL** and **Open URLs** actions in Apple Shortcuts. URLs have
 the form `openddpm://apply?id=PRESET-UUID`; they launch the app when needed.
-`openddpm://remote` opens the remote and `openddpm://previous` selects the previous
-confirmed preset. Opening a URL acknowledges dispatch, not hardware verification.
+`openddpm://previous` selects the previous confirmed preset. Opening a URL
+acknowledges dispatch, not hardware verification.
 
 With OpenDDPM running:
 
@@ -154,7 +163,6 @@ APP=/Applications/OpenDDPM.app/Contents/MacOS/OpenDDPM
 "$APP" --status
 "$APP" --apply 'PRESET-UUID-OR-UNIQUE-NAME' --wait
 "$APP" --previous --wait
-"$APP" --remote
 ```
 
 `--wait` follows that exact request. Exit codes: 0 verified, 1 failed or unavailable,
@@ -165,8 +173,8 @@ readback; its `observedAt` field is absent when the state cannot be confirmed.
 The API binds only to `127.0.0.1:57571`. Its bearer credential is stored with mode
 0600 at `~/Library/Application Support/OpenDDPM/control.json`. Do not share or
 commit that file. Commands: `GET /presets`, `GET /status`, `POST /apply` with
-`{"preset":"UUID"}`, `GET /requests/UUID`, `POST /previous`, `POST /refresh`, and
-`POST /remote`. Status is cached; refresh is queued through the same coordinator.
+`{"preset":"UUID"}`, `GET /requests/UUID`, `POST /previous`, and `POST /refresh`.
+Status is cached; refresh is queued through the same coordinator.
 Request receipts retain the latest 100 requests for the current app session.
 
 ## Apple Home

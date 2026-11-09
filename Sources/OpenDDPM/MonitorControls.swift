@@ -8,23 +8,26 @@ struct MonitorSlider: View {
     var disabled = false
     @ViewState private var draft = 0.0
     @ViewState private var editing = false
-    private var reportedValue: Double? { feature.register == 0x10 ? controls.displayedBrightness : controls.values[feature.register].map(Double.init) }
+    private var reportedValue: Double? { feature.register == 0x10 ? controls.displayedBrightness : controls.displayedValue(for: feature).map(Double.init) }
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(feature.title)
                 Spacer()
-                Text(editing ? "\(Int(draft))%" : ((feature.register == 0x10 ? (controls.brightnessPreview ?? controls.values[feature.register]) : controls.values[feature.register]).map { "\($0)%" } ?? "Unavailable"))
+                Text(editing ? "\(Int(draft.rounded()))%" : reportedValue.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
                     .foregroundStyle(.secondary).monospacedDigit()
             }
-            Slider(value: $draft, in: 0...100, step: 1, onEditingChanged: { active in
-                editing = active
-                if !active { controls.set(feature, to: Int(draft)) }
-            })
+            Slider(value: Binding(get: { draft }, set: { value in
+                draft = value
+                controls.set(feature, to: Int(value.rounded()))
+            }), in: 0...100, onEditingChanged: { editing = $0 })
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
             .accessibilityLabel(feature.title)
-            .disabled(disabled || (controls.working && feature.register != 0x10) || controls.values[feature.register] == nil || (feature.register == 0x10 && !controls.canAdjustBrightness))
+            .disabled(disabled || reportedValue == nil || (feature.register == 0x10 && !controls.canAdjustBrightness))
             .help((feature.register == 0x10 ? controls.brightnessLockReason : nil) ?? controls.failures[feature.register] ?? feature.title)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { draft = reportedValue ?? 0 }
         .onChange(of: reportedValue) { value in
             if !editing { withAnimation(.easeOut(duration: 0.14)) { draft = value ?? 0 } }
@@ -47,27 +50,15 @@ struct MonitorSettingsView: View {
                 MonitorSlider(controls: controls, feature: .brightness)
                 if let reason = controls.brightnessLockReason { Text(reason).font(.caption).foregroundStyle(.secondary) }
                 Toggle("Automatic brightness", isOn: Binding(get: { controls.autoBrightness }, set: { controls.setAutoBrightness($0) }))
-                    .disabled(controls.working || controls.values[0x66] == nil)
-                Picker("Auto Brightness Range Level", selection: Binding(get: { (controls.values[0x66] ?? 0) >> 6 & 3 }, set: { controls.setAutoRange($0) })) {
+                    .disabled(controls.displayedValue(for: .automatic) == nil)
+                Picker("Auto Brightness Range Level", selection: Binding(get: { (controls.displayedValue(for: .automatic) ?? 0) >> 6 & 3 }, set: { controls.setAutoRange($0) })) {
                     Text("Low").tag(0); Text("Medium").tag(1); Text("High").tag(2)
-                }.disabled(controls.working || controls.values[0x66] == nil || !controls.autoBrightness)
+                }.disabled(controls.displayedValue(for: .automatic) == nil || !controls.autoBrightness)
                 MonitorSlider(controls: controls, feature: .contrast)
             }
             Section("HDR") {
-                Toggle("HDR", isOn: Binding(get: { hdr.enabled }, set: { enabled in
-                    let serial = store.configuration.monitorSerial
-                    Task {
-                        guard controls.allowsControl?() == true else { return }
-                        controls.suspended = true
-                        defer { controls.suspended = false }
-                        await hdr.setEnabled(enabled) { desired in try await store.engine.prepareHDR(desired, serial: serial) }
-                        controls.suspended = false
-                        store.refreshMonitorHDR()
-                        await controls.refresh()
-                        displayModes.refresh(displayID: displayID)
-                    }
-                }))
-                .disabled(!hdr.supported || hdr.busy || controls.working)
+                Toggle("HDR", isOn: Binding(get: { controls.hdrPreview ?? hdr.enabled }, set: { store.setHDR($0) }))
+                .disabled(!hdr.supported)
                 if hdr.enabled {
                     Text("HDR is on. Available brightness controls depend on the monitor and connection.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -75,10 +66,10 @@ struct MonitorSettingsView: View {
                 if let error = hdr.error { Text(error).font(.caption).foregroundStyle(.red) }
             }
             Section("Color") {
-                Picker("Color preset", selection: Binding(get: { controls.values[PictureFeature.color.register] ?? -1 }, set: { controls.set(.color, to: $0) })) {
+                Picker("Color preset", selection: Binding(get: { controls.displayedValue(for: .color) ?? -1 }, set: { controls.set(.color, to: $0) })) {
                     Text("Unavailable").tag(-1)
                     ForEach(PictureFeature.color.choices, id: \.value) { choice in Text(choice.title).tag(choice.value) }
-                }.disabled(controls.working)
+                }
                 if controls.values[PictureFeature.color.register] == nil {
                     Text("The current color preset is unavailable. You can select a preset; OpenDDPM checks the monitor response after applying it.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -89,13 +80,13 @@ struct MonitorSettingsView: View {
             if let message = controls.message { Section { StatusBanner(message: message, isError: true) } }
             Section {
                 Button("Refresh monitor settings") { Task { await controls.refresh() } }
-                    .disabled(controls.working || store.busy || !store.configured)
+                    .disabled(!store.configured)
                 Text("Settings are read from the selected monitor. Unavailable controls may be restricted by HDR, a split layout, or the current connection.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .disabled(store.busy || !store.configured || hdr.busy)
+        .disabled(!store.configured)
         .onChange(of: displayID) { _ in store.refreshMonitorHDR() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in store.refreshMonitorHDR() }
         .task(id: controls.nativeObservationIdentity) {
@@ -112,26 +103,26 @@ private struct QuickSliderRow: View {
     let feature: PictureFeature
     let lowIcon: String
     let highIcon: String
-    let busy: Bool
     @ViewState private var draft = 0.0
     @ViewState private var editing = false
-    private var reportedValue: Double? { feature.register == 0x10 ? controls.displayedBrightness : controls.values[feature.register].map(Double.init) }
+    private var reportedValue: Double? { feature.register == 0x10 ? controls.displayedBrightness : controls.displayedValue(for: feature).map(Double.init) }
     private var lock: String? { feature.register == 0x10 ? controls.brightnessLockReason : nil }
-    private var enabled: Bool { lock == nil && !busy && (!controls.working || feature.register == 0x10) && controls.values[feature.register] != nil }
+    private var enabled: Bool { lock == nil && reportedValue != nil }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(feature.title).font(.headline)
                 Spacer()
-                Text(lock == nil ? ((feature.register == 0x10 ? (controls.brightnessPreview ?? controls.values[feature.register]) : controls.values[feature.register]).map { "\($0)%" } ?? "Unavailable") : (controls.hdrEnabled == true ? "HDR on" : controls.autoBrightness ? "Auto" : "Checking…"))
+                Text(lock == nil ? (reportedValue.map { "\(Int($0.rounded()))%" } ?? "Unavailable") : (controls.hdrEnabled == true ? "HDR on" : controls.autoBrightness ? "Auto" : "Checking…"))
                     .foregroundStyle(.secondary).font(.callout).monospacedDigit()
             }
             HStack(spacing: 8) {
                 Image(systemName: lowIcon).frame(width: 18)
-                Slider(value: $draft, in: 0...100, onEditingChanged: { active in
-                    editing = active
-                    if !active { controls.set(feature, to: Int(draft.rounded())) }
-                })
+                Slider(value: Binding(get: { draft }, set: { value in
+                    draft = value
+                    controls.set(feature, to: Int(value.rounded()))
+                }), in: 0...100, onEditingChanged: { editing = $0 })
+                .labelsHidden()
                 .accessibilityLabel(feature.title)
                 .disabled(!enabled)
                 .frame(height: 22)
@@ -184,20 +175,23 @@ struct QuickMonitorView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
                 Text(store.configuration.monitorName).font(.headline)
-                QuickSliderRow(controls: controls, feature: .brightness, lowIcon: "sun.min.fill", highIcon: "sun.max.fill", busy: store.busy)
-                QuickSliderRow(controls: controls, feature: .volume, lowIcon: "speaker.fill", highIcon: "speaker.wave.3.fill", busy: store.busy)
+                QuickSliderRow(controls: controls, feature: .brightness, lowIcon: "sun.min.fill", highIcon: "sun.max.fill")
+                QuickSliderRow(controls: controls, feature: .volume, lowIcon: "speaker.fill", highIcon: "speaker.wave.3.fill")
             }.padding(14)
             Divider().padding(.horizontal, 10)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Presets").font(.headline).padding(.horizontal, 10).padding(.top, 11).padding(.bottom, 5)
                 ForEach(Array(store.configuration.presets.prefix(4))) { preset in
                     QuickMenuRow(title: preset.name, icon: preset.layout == .full ? "display" : "rectangle.split.2x1", checked: store.lastPresetID == preset.id,
-                                 enabled: store.configured && !store.busy && (!store.configuration.keepLocalVisible || preset.includes(store.configuration.localInput))) { store.apply(preset) }
+                                 enabled: store.configured && (!store.configuration.keepLocalVisible || preset.includes(store.configuration.localInput))) { store.apply(preset) }
                 }
             }.padding(.horizontal, 5).padding(.bottom, 7)
             Divider().padding(.horizontal, 10)
             VStack(spacing: 0) {
-                QuickMenuRow(title: "Open preset remote…", icon: nil, reserveSelectionSpace: false) { store.openRemote?() }
+                QuickMenuRow(title: "All presets…", icon: nil, reserveSelectionSpace: false) {
+                    store.selectedPage = "presets"
+                    store.openWindow?()
+                }
                 QuickMenuRow(title: "Settings…", icon: nil, reserveSelectionSpace: false) { store.openWindow?() }
                 QuickMenuRow(title: "Quit OpenDDPM", icon: nil, reserveSelectionSpace: false, enabled: !store.busy) { store.quitApplication?() }
             }.padding(5)
