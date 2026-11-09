@@ -124,8 +124,8 @@ Outputs:
 
 - `build/OpenDDPM.app` — universal signed app; ad-hoc signing is the default
   unless a signing identity or an existing local development identity is configured.
-- `dist/OpenDDPM-0.5.0-universal.dmg` — drag-to-Applications installer.
-- `dist/OpenDDPM-0.5.0-universal.zip` — portable application bundle.
+- `dist/OpenDDPM-0.5.1-universal.dmg` — drag-to-Applications installer.
+- `dist/OpenDDPM-0.5.1-universal.zip` — portable application bundle.
 - `dist/SHA256SUMS.txt` — asset checksums.
 
 Set `VERSION=…` when building a new version. To sign with Developer ID, set
