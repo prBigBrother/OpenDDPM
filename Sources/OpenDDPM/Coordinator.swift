@@ -10,6 +10,7 @@ struct TransitionState: Codable {
     var observedAt: Date?
     var progress = "Ready"
     var error: String?
+    var wakeWarning: String?
     var elapsed: Double?
 }
 
@@ -37,6 +38,8 @@ final class PresetCoordinator {
     private var readingInBackground = false
     private var worker: Task<Void, Never>?
     private var unavailableReason: String?
+    private var wakeSuppressedByPowerOff = false
+    var wakeConfigurationProvider: (() -> WakeConfiguration?)?
     var onChange: (() -> Void)?
     var busy: Bool { desired != nil || (worker != nil && !readingInBackground) }
     init(engine: any MonitorControlling, journal: TransitionJournal = .standard) { self.engine = engine; self.journal = journal }
@@ -48,6 +51,7 @@ final class PresetCoordinator {
         guard !configuration.keepLocalVisible || preset.includes(configuration.localInput) else { throw ControlError.message("This preset hides this Mac's \(configuration.localInput.title) input.") }
         if let desired, desired.preset == preset { return desired.id }
         if let pending = desired { finish(pending.id, phase: "superseded") }
+        wakeSuppressedByPowerOff = false
         let request = Request(id: UUID(), preset: preset, configuration: configuration)
         desired = request
         receipts.append(RequestReceipt(id: request.id, presetID: preset.id, phase: "queued"))
@@ -68,6 +72,13 @@ final class PresetCoordinator {
         if let reason = unavailableReason { throw ControlError.message(reason) }
         guard !configuration.monitorSerial.isEmpty else { throw ControlError.message("Monitor serial is missing.") }
         let serial = configuration.monitorSerial
+        // Set before suspension: an in-flight status read or wake must honor explicit standby.
+        wakeSuppressedByPowerOff = !on
+        if on {
+            let preset = state.monitor.map { status in DisplayPreset(name: "Current inputs", layout: SplitLayout.allCases.first { $0.code == status.mode } ?? .full, main: status.main, secondary: status.secondary ?? status.main) }
+            let selected = preset ?? configuration.presets.first { $0.id == state.verifiedPresetID }
+            if let selected { await wake(selected, configuration: configuration) }
+        }
         try await engine.setPower(on, serial: serial)
         if var current = state.monitor {
             current.power = on ? 1 : 4
@@ -92,6 +103,27 @@ final class PresetCoordinator {
             state.progress = reason
         }
         onChange?()
+    }
+    private func wake(_ preset: DisplayPreset, configuration: AppConfiguration) async {
+        guard !wakeSuppressedByPowerOff else { return }
+        state.wakeWarning = nil
+        let current: WakeConfiguration?
+        if let provider = wakeConfigurationProvider { current = provider() }
+        else { current = configuration.wakeup }
+        guard let settings = current, settings.enabled else { return }
+        do { try await WakeClient().wake(preset, configuration: settings, isEnabled: { [weak self] in
+            await self?.wakeIsEnabled() ?? false
+        }) }
+        catch {
+            state.wakeWarning = error.localizedDescription
+            journal.record("wake-warning", fields: ["error": error.localizedDescription])
+        }
+        onChange?()
+    }
+    private func wakeIsEnabled() -> Bool {
+        guard !wakeSuppressedByPowerOff else { return false }
+        guard let provider = wakeConfigurationProvider else { return true }
+        return provider()?.enabled == true
     }
     private func startWorker() {
         guard worker == nil else { return }
@@ -118,6 +150,8 @@ final class PresetCoordinator {
                 state.phase = "applying"; state.error = nil; state.observedAt = nil
                 finish(request.id, phase: "applying"); onChange?()
                 do {
+                    await wake(request.preset, configuration: request.configuration)
+                    guard isCurrent(request.id) else { finish(request.id, phase: "superseded"); continue }
                     let result = try await engine.apply(request.preset, configuration: request.configuration, request: request.id,
                         isCurrent: { [weak self] in await self?.isCurrent(request.id) ?? false },
                         progress: { [weak self] text in await self?.report(text, request: request.id) })
@@ -160,7 +194,14 @@ final class PresetCoordinator {
                     let status = try await engine.status(serial: selected.monitorSerial)
                     guard unavailableReason == nil else { continue }
                     // Never overwrite a newer selection's progress with a refresh result.
+                    let previous = state.monitor
                     confirm(status, configuration: selected)
+                    if desired == nil, let previous, status.isPoweredOn,
+                       !previous.isPoweredOn || previous.main != status.main || previous.secondary != status.secondary || previous.mode != status.mode {
+                        let preset = DisplayPreset(name: "Observed inputs", layout: SplitLayout.allCases.first { $0.code == status.mode } ?? .full,
+                                                   main: status.main, secondary: status.secondary ?? status.main)
+                        await wake(preset, configuration: selected)
+                    }
                     if desired == nil { state.phase = "verified"; state.progress = status.description; state.error = nil; state.requestID = nil; state.elapsed = nil }
                 } catch {
                     if desired == nil && unavailableReason == nil { state.phase = "failed"; state.progress = "Monitor unavailable"; state.error = error.localizedDescription; state.observedAt = nil }

@@ -44,6 +44,7 @@ struct DisplayPreset: Codable, Identifiable, Equatable {
 }
 
 struct AppConfiguration: Codable {
+    var wakeup: WakeConfiguration? = nil
     var schemaVersion = 1
     var monitorSerial = ""
     var monitorName = ""
@@ -68,13 +69,14 @@ struct ConnectedMonitor: Identifiable, Equatable {
     var serial: String
     var name: String
     var model: String
+    var displayID: UInt32? = nil
     var id: String { serial }
     static func decode(_ text: String) throws -> [Self] {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let rows = try JSONSerialization.jsonObject(with: Data(trimmed.utf8)) as? [[String: Any]] else { throw ControlError.message("Unexpected monitor list from native DDC.") }
         return rows.compactMap { row in
             guard let serial = row["serial"] as? String, !serial.isEmpty else { return nil }
-            return Self(serial: serial, name: row["name"] as? String ?? "Monitor", model: row["model"] as? String ?? "")
+            return Self(serial: serial, name: row["name"] as? String ?? "Monitor", model: row["model"] as? String ?? "", displayID: (row["displayID"] as? NSNumber)?.uint32Value)
         }
     }
 }

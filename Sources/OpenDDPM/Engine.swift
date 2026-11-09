@@ -81,12 +81,15 @@ protocol MonitorControlling: Actor {
 }
 
 actor MonitorEngine: MonitorControlling {
+    private var nativeBrightnessBinding: (serial: String, displayID: UInt32)?
+    private let nativeBrightness: NativeBrightnessControlling
     private let transport: MonitorTransport
     private let timing: EngineTiming
     private let journal: TransitionJournal
     private var requestID: UUID?
-    init(helper: URL) { transport = HelperRunner(executable: helper); timing = EngineTiming(); journal = .standard }
-    init(transport: MonitorTransport, timing: EngineTiming, journal: TransitionJournal) {
+    init(helper: URL) { nativeBrightness = NativeBrightnessBridge(); transport = HelperRunner(executable: helper); timing = EngineTiming(); journal = .standard }
+    init(transport: MonitorTransport, timing: EngineTiming, journal: TransitionJournal, nativeBrightness: NativeBrightnessControlling = NativeBrightnessBridge()) {
+        self.nativeBrightness = nativeBrightness
         self.transport = transport; self.timing = timing; self.journal = journal
     }
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
@@ -129,6 +132,101 @@ actor MonitorEngine: MonitorControlling {
         let code = on ? 1 : 4
         _ = try command(["write", serial, "0xD6", String(format: "0x%02X", code)], deadline: deadline)
         journal.record("power-write", fields: ["serial": serial, "power": code])
+    }
+    // Picture operations stay on the same actor as input/layout commands.
+    private func nativeBrightnessTarget(serial: String, displayID: UInt32?) throws -> UInt32? {
+        guard let displayID, nativeBrightness.supports(displayID) else { return nil }
+        // CG IDs can be reused on reconnection. Revalidate against the same serial
+        // immediately before native access, rather than touching another display.
+        let matches = try discover().filter { $0.serial == serial }
+        guard matches.count == 1, matches[0].displayID == displayID else {
+            throw ControlError.message("The selected monitor reconnected. Refresh monitor discovery before adjusting brightness.")
+        }
+        nativeBrightnessBinding = (serial, displayID)
+        return displayID
+    }
+    /// Read-only sampling for visible controls. Identity was established by a
+    /// serial-bound discovery; this path performs no helper/DDC transactions.
+    func sampleNativeBrightness(serial: String, displayID: UInt32) throws -> Double? {
+        guard let binding = nativeBrightnessBinding, binding.serial == serial,
+              binding.displayID == displayID, nativeBrightness.supports(displayID) else { return nil }
+        return try nativeBrightness.readPrecise(displayID)
+    }
+    func readPicture(_ register: Int, serial: String, displayID: UInt32? = nil) throws -> Int {
+        if register == 0x10, let target = try nativeBrightnessTarget(serial: serial, displayID: displayID) {
+            let value = try nativeBrightness.read(target)
+            journal.record("native-brightness-read", fields: ["serial": serial, "displayID": target, "value": value])
+            return value
+        }
+        let value = try readOnce(register, serial: serial, deadline: now + timing.command)
+        return register == 0xE2 ? value & 0xff : value
+    }
+    /// Send a keyboard target promptly. The controls worker verifies the final
+    /// target after the key burst; the transport acknowledgement is not readback.
+    func sendBrightness(_ value: Int, serial: String, displayID: UInt32?) throws {
+        guard PictureFeature.brightness.accepts(value) else { throw ControlError.message("Unsupported brightness value.") }
+        if let target = try nativeBrightnessTarget(serial: serial, displayID: displayID) {
+            try nativeBrightness.write(value, displayID: target)
+            journal.record("native-brightness-write", fields: ["serial": serial, "displayID": target, "value": value])
+        } else {
+            _ = try command(["write", serial, "0x10", String(value)], deadline: now + timing.command)
+        }
+        journal.record("brightness-sent", fields: ["serial": serial, "value": value, "uptimeMS": Int(now * 1000)])
+    }
+    func writePicture(_ register: Int, value requestedValue: Int, serial: String, mask: Int = 0xffff, displayID: UInt32? = nil) throws -> Int {
+        var value = requestedValue
+        if register == 0x66 {
+            guard mask == 3 || mask == 0xc0 else { throw ControlError.message("Invalid automatic brightness field.") }
+            let before = try readPicture(register, serial: serial)
+            value = (before & ~mask) | (requestedValue & mask)
+        } else if mask != 0xffff { throw ControlError.message("Invalid monitor setting mask.") }
+        guard PictureFeature.all.contains(where: { $0.register == register && $0.accepts(value) }) else {
+            throw ControlError.message("Unsupported monitor setting or value.")
+        }
+        if register == 0x10, let target = try nativeBrightnessTarget(serial: serial, displayID: displayID) {
+            try nativeBrightness.write(value, displayID: target)
+            journal.record("native-brightness-write", fields: ["serial": serial, "displayID": target, "value": value])
+            let deadline = now + 2
+            var confirmations = 0
+            while now < deadline {
+                let actual = try nativeBrightness.read(target)
+                confirmations = actual == value ? confirmations + 1 : 0
+                if confirmations >= 2 {
+                    journal.record("native-brightness-verified", fields: ["serial": serial, "displayID": target, "value": actual])
+                    return actual
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            throw ControlError.message("macOS did not confirm the requested brightness. Refresh monitor settings and retry.")
+        }
+        let deadline = now + timing.discovery
+        let output = register == 0xE2 ? PictureFeature.colorCommand(value)! : (register: register, value: value)
+        _ = try command(["write", serial, String(format: "0x%02X", output.register), String(output.value)], deadline: deadline)
+        // Let the monitor settle before reading; the acknowledgement alone is not verification.
+        Thread.sleep(forTimeInterval: 0.2)
+        let verificationRegister = output.register
+        let expected = output.value
+        var confirmations = 0
+        var last = "No valid reply."
+        while now < deadline {
+            do {
+                let actual = try readOnce(verificationRegister, serial: serial, deadline: deadline)
+                confirmations = actual == expected ? confirmations + 1 : 0
+                last = "Monitor returned \(actual) after requesting \(expected)."
+                if confirmations >= 2 { return register == 0xE2 ? value : actual }
+            } catch {
+                // Secondary PBP inputs can temporarily stop replying after a
+                // successful write. Retry reads only; never resend the write.
+                last = error.localizedDescription
+            }
+            let remaining = deadline - now
+            if remaining > 0 { Thread.sleep(forTimeInterval: min(0.25, remaining)) }
+        }
+        throw ControlError.message("Monitor setting was not confirmed before the time limit. \(last) Refresh its settings before retrying.")
+    }
+    func prepareHDR(_ enabled: Bool, serial: String) throws {
+        // DDPM sends this command but reads HDR state through MPDisplay, not EA.
+        _ = try command(["write", serial, "0xEA", enabled ? "0xFE01" : "0xFE00"], deadline: now + timing.command)
     }
     func discover() throws -> [ConnectedMonitor] { try ConnectedMonitor.decode(command(["list"], deadline: now + timing.discovery)) }
     func status(serial: String) async throws -> MonitorStatus { try await readStatus(serial: serial, deadline: now + timing.discovery) }

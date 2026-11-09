@@ -48,7 +48,9 @@ actor GatedEngine: MonitorControlling {
     var current = MonitorStatus(mode: 0, main: .dp, secondary: nil, localInput: .dp)
     func discover() -> [ConnectedMonitor] { [] }
     func status(serial: String) -> MonitorStatus { current }
-    func setPower(_ on: Bool, serial: String) async throws { current.power = on ? 1 : 4 }
+    var stalePowerReadback = false
+    func useStalePowerReadback() { stalePowerReadback = true }
+    func setPower(_ on: Bool, serial: String) async throws { if !stalePowerReadback { current.power = on ? 1 : 4 } }
     func apply(_ preset: DisplayPreset, configuration: AppConfiguration, request: UUID,
                isCurrent: @escaping @Sendable () async -> Bool,
                progress: @escaping @Sendable (String) async -> Void) async throws -> ApplyResult {
@@ -172,6 +174,22 @@ struct CoordinatorTests {
         for invalid in ["GET / HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n", "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", "POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n"] {
             do { _ = try HTTPRequest.parse(Data(invalid.utf8)); check(false, "malformed HTTP rejected") } catch { check(true, "malformed HTTP rejected") }
         }
+        let powerEngine = GatedEngine()
+        await powerEngine.useStalePowerReadback()
+        let powerCoordinator = PresetCoordinator(engine: powerEngine, journal: journal)
+        var wakeAttempts = 0
+        powerCoordinator.wakeConfigurationProvider = { wakeAttempts += 1; return nil }
+        powerCoordinator.refresh(configuration: configuration)
+        await drain(powerCoordinator)
+        try await powerCoordinator.setPower(false, configuration: configuration)
+        await drain(powerCoordinator)
+        check(wakeAttempts == 0, "standby never requests wake, including stale on readback")
+        powerCoordinator.refresh(configuration: configuration)
+        await drain(powerCoordinator)
+        check(wakeAttempts == 0, "later refresh does not undo explicit standby")
+        try await powerCoordinator.setPower(true, configuration: configuration)
+        await drain(powerCoordinator)
+        check(wakeAttempts == 1, "explicit power on permits wake again")
         print("PASS: \(count) coordinator, readiness, recovery and deadline assertions")
     }
 }

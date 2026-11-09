@@ -2,6 +2,10 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# Reuse this Mac's persistent development identity across ordinary updates.
+if [ -z "${SIGNING_IDENTITY+x}" ] && [ -f "$ROOT/local/signing/OpenDDPM.keychain-db" ]; then
+  exec "$ROOT/scripts/build-local.sh" "$@"
+fi
 VERSION="${VERSION:-0.4.0}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 APP="$BUILD_DIR/OpenDDPM.app"
@@ -50,11 +54,15 @@ for SIZE in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
-codesign --force --sign "$SIGNING_IDENTITY" "$APP/Contents/Helpers/openddpm-ddc"
-if [ "$SIGNING_IDENTITY" = "-" ]; then
-  codesign --force --sign - "$APP"
+SIGNING_ARGS=(--force --sign "$SIGNING_IDENTITY")
+if [ -n "${SIGNING_KEYCHAIN:-}" ]; then
+  SIGNING_ARGS+=(--keychain "$SIGNING_KEYCHAIN" --timestamp=none)
+fi
+codesign "${SIGNING_ARGS[@]}" "$APP/Contents/Helpers/openddpm-ddc"
+if [ "$SIGNING_IDENTITY" = "-" ] || [ -n "${SIGNING_KEYCHAIN:-}" ]; then
+  codesign "${SIGNING_ARGS[@]}" "$APP"
 else
-  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
+  codesign "${SIGNING_ARGS[@]}" --options runtime --timestamp "$APP"
 fi
 codesign --verify --deep --strict "$APP"
 echo "Built $APP ($VERSION, universal arm64 + x86_64)"

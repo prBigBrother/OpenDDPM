@@ -208,7 +208,7 @@ int main(int argc, const char *argv[]) {
         NSArray<NativeDisplay *> *found = displays();
         if (strcmp(argv[1], "list") == 0) {
             NSMutableArray *rows = [NSMutableArray array];
-            for (NativeDisplay *display in found) [rows addObject:@{@"serial":display.serial, @"name":display.name, @"model":display.name}];
+            for (NativeDisplay *display in found) [rows addObject:@{@"serial":display.serial, @"name":display.name, @"model":display.name, @"displayID":@(display.displayID)}];
             NSData *data = [NSJSONSerialization dataWithJSONObject:rows options:0 error:nil];
             puts([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding].UTF8String); return 0;
         }
@@ -216,12 +216,18 @@ int main(int argc, const char *argv[]) {
         if ((!writing && strcmp(argv[1], "read") != 0) || argc != (writing ? 5 : 4)) return 2;
         char *end = NULL; long registerCode = strtol(argv[3], &end, 0);
         if (*end || registerCode < 0 || registerCode > 255) return 2;
-        // Limit writes to the registers OpenDDPM needs (inputs, layout, power).
-        if (writing && registerCode != 0x60 && registerCode != 0xe8 && registerCode != 0xe9 && registerCode != 0xd6) return 2;
+        // Allow only supported input, power, and picture controls.
+        if (writing && registerCode != 0x60 && registerCode != 0xe8 && registerCode != 0xe9 && registerCode != 0xd6 && registerCode != 0x10 && registerCode != 0x12 && registerCode != 0x62 && registerCode != 0x66 && registerCode != 0xdc && registerCode != 0x14 && registerCode != 0xf0 && registerCode != 0xea) return 2;
         uint16_t value = 0;
         if (writing) {
             long parsed = strtol(argv[4], &end, 0); if (*end || parsed < 0 || parsed > 65535) return 2;
             if (registerCode == 0xd6 && parsed != 1 && parsed != 4) return 2;
+            if ((registerCode == 0x10 || registerCode == 0x12 || registerCode == 0x62) && parsed > 100) return 2;
+            if (registerCode == 0x66 && (parsed == 65535 || (parsed & 3) < 1 || (parsed & 3) > 2 || ((parsed >> 6) & 3) > 2)) return 2;
+            if (registerCode == 0xdc && parsed != 0 && parsed != 3 && parsed != 5) return 2;
+            if (registerCode == 0x14 && parsed != 1 && parsed != 4 && parsed != 5 && parsed != 6 && parsed != 8 && parsed != 9 && parsed != 11 && parsed != 12) return 2;
+            if (registerCode == 0xf0 && parsed != 9 && parsed != 10 && parsed != 161) return 2;
+            if (registerCode == 0xea && parsed != 0xfe00 && parsed != 0xfe01) return 2;
             value = parsed;
         }
         NSString *serial = [NSString stringWithUTF8String:argv[2]];

@@ -1,0 +1,7 @@
+# Local Wi-Fi credentials and generated ESP-IDF files
+main/wifi_config.h
+prebuilt/*.bin
+build/
+managed_components/
+sdkconfig
+sdkconfig.old

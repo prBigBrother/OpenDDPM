@@ -7,6 +7,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     let store = AppStore()
     var statusItem: NSStatusItem!
     var window: NSWindow?
+    var quickPopover: NSPopover?
     var remote: NSPanel?
     var contextMenu: NSMenu?
     var controlServer: LocalControlServer?
@@ -39,6 +40,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         statusItem.button?.toolTip = "OpenDDPM · Monitor presets"
         store.openWindow = { [weak self] in self?.showWindow() }
         store.openRemote = { [weak self] in self?.showRemote() }
+        store.quitApplication = { [weak self] in self?.quit() }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(statusClicked)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -83,11 +85,36 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         store.togglePower()
     }
     @objc func statusClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp { showPresetsMenu() }
-        else if remote?.isVisible == true { remote?.orderOut(nil) }
-        else { showRemote() }
+        if quickPopover?.isShown == true { quickPopover?.performClose(nil); return }
+        guard let button = statusItem.button else { return }
+        if quickPopover == nil {
+            let popover = NSPopover()
+            popover.behavior = .transient
+            let host = NSHostingController(rootView: QuickMonitorView(store: store, controls: store.monitorControls))
+            // Size before attachment. Otherwise SwiftUI can grow a zero-sized
+            // popover around its initial origin and push its top above the bar.
+            host.sizingOptions = []
+            popover.contentViewController = host
+            quickPopover = popover
+        }
+        if let popover = quickPopover, let host = popover.contentViewController as? NSHostingController<QuickMonitorView> {
+            let availableHeight = max(1, (button.window?.screen?.visibleFrame.height ?? 800) - 16)
+            let measured = host.sizeThatFits(in: NSSize(width: 310, height: availableHeight))
+            let size = NSSize(width: 310, height: min(max(1, measured.height), availableHeight))
+            host.preferredContentSize = size
+            host.view.setFrameSize(size)
+            popover.contentSize = size
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        // A popover must not select its first preset just because it opened.
+        quickPopover?.contentViewController?.view.window?.makeFirstResponder(nil)
+        DispatchQueue.main.async { [weak self] in
+            self?.quickPopover?.contentViewController?.view.window?.makeFirstResponder(nil)
+        }
     }
+
     @objc func showRemote() {
+        quickPopover?.performClose(nil)
         applyStoredAppearance()
         if remote == nil {
             let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 580), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -112,14 +139,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
     @objc func refreshStatus() { store.refresh() }
-    @objc func showPresetsMenu() {
-        guard let menu = contextMenu else { return }
-        if let button = statusItem.button { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
-    }
+    @objc func showPresetsMenu() { statusClicked() }
+
     @objc func showWindow() {
+        quickPopover?.performClose(nil)
         applyStoredAppearance()
         if window == nil {
-            let created = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            let created = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             created.title = "OpenDDPM"
             created.toolbarStyle = .unified
             created.minSize = NSSize(width: 800, height: 560)

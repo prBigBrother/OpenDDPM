@@ -79,11 +79,12 @@ struct LayoutPreview: View {
 }
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
-    case setup, presets, hotkeys, automation, about
+    case setup, monitor, presets, hotkeys, automation, about
     var id: String { rawValue }
     var title: String {
         switch self {
         case .setup: return "Monitor & inputs"
+        case .monitor: return "Monitor controls"
         case .presets: return "Presets"
         case .hotkeys: return "Hotkeys"
         case .automation: return "Apple Home"
@@ -93,6 +94,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .setup: return "display"
+        case .monitor: return "slider.horizontal.3"
         case .presets: return "rectangle.split.2x1"
         case .hotkeys: return "command"
         case .automation: return "house"
@@ -104,9 +106,12 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
 struct ConfigurationView: View {
     @ObservedObject var store: AppStore
     @AppStorage("OpenDDPM.appearance") private var appearanceRaw = AppAppearance.system.rawValue
+    @ViewState private var sidebarVisible = true
 
     var body: some View {
-        NavigationSplitView {
+        NavigationStack {
+          HStack(spacing: 0) {
+            if sidebarVisible {
             List(selection: Binding<String?>(get: { store.selectedPage }, set: {
                 if let page = $0 { store.selectedPage = page }
             })) {
@@ -117,8 +122,7 @@ struct ConfigurationView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationTitle("OpenDDPM")
-            .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 280)
+            .frame(width: 215)
             .safeAreaInset(edge: .bottom, alignment: .leading) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(store.configured ? store.configuration.monitorName : "Setup required")
@@ -128,10 +132,12 @@ struct ConfigurationView: View {
                 }
                 .padding()
             }
-        } detail: {
+            Divider()
+            }
             Group {
                 switch SettingsPage(rawValue: store.selectedPage) ?? .setup {
                 case .setup: SetupView(store: store)
+                case .monitor: MonitorSettingsView(store: store, controls: store.monitorControls)
                 case .presets: PresetsView(store: store)
                 case .hotkeys: HotkeysView(store: store)
                 case .automation: AutomationSettingsView(store: store, homekit: store.homekit)
@@ -143,6 +149,9 @@ struct ConfigurationView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     Divider()
+                    if let warning = store.transition.wakeWarning {
+                        StatusBanner(message: "Bluetooth wake: " + warning, isError: true).padding(8)
+                    }
                     HStack(spacing: 8) {
                         if store.busy { ProgressView().controlSize(.small) }
                         Text(store.progress).font(.caption).textSelection(.enabled)
@@ -155,6 +164,10 @@ struct ConfigurationView: View {
             }
             .toolbar {
                 ToolbarItemGroup {
+                    Button { sidebarVisible.toggle() } label: {
+                        Label("Toggle sidebar", systemImage: "sidebar.left")
+                    }
+                    .help("Toggle sidebar")
                     Button { store.openRemote?() } label: {
                         Label("Open preset remote", systemImage: "rectangle.on.rectangle")
                     }
@@ -166,6 +179,7 @@ struct ConfigurationView: View {
                     .help("Refresh monitor status")
                 }
             }
+          }
         }
         .frame(minWidth: 800, minHeight: 560)
         .preferredColorScheme(AppAppearance(rawValue: appearanceRaw)?.colorScheme)
@@ -174,6 +188,85 @@ struct ConfigurationView: View {
         .alert("OpenDDPM", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }
+    }
+}
+
+
+private struct WakeSetupView: View {
+    @ObservedObject var store: AppStore
+    @ViewState private var snapshot: WakeStatus?
+    @ViewState private var message: String?
+    @ViewState private var loading = false
+    private var settings: Binding<WakeConfiguration> {
+        Binding(get: { store.configuration.wakeup ?? WakeConfiguration() }, set: { store.configuration.wakeup = $0 })
+    }
+    var body: some View {
+        Section("ESP32 · Bluetooth wake") {
+            Toggle("Enable ESP32 support", isOn: settings.enabled)
+            Group {
+                TextField("ESP32 address", text: settings.endpoint)
+                    .onChange(of: store.configuration.wakeup?.endpoint) { _ in snapshot = nil }
+                Button("Refresh devices") {
+                    Task { await refreshDevices() }
+                }
+                ForEach(VideoInput.allCases) { input in
+                    let selected = settings.wrappedValue.inputs[input.rawValue] ?? ""
+                    let addresses = Array(Set((snapshot?.paired ?? []) + (snapshot?.devices.map(\.address) ?? []) + (selected.isEmpty ? [] : [selected]))).sorted()
+                    Picker(input.title, selection: Binding(get: { settings.wrappedValue.inputs[input.rawValue] ?? "" }, set: {
+                        var updated = settings.wrappedValue; updated.inputs[input.rawValue] = $0; settings.wrappedValue = updated
+                    })) {
+                        Text("No wake device").tag("")
+                        ForEach(addresses, id: \.self) { address in
+                            Text((settings.wrappedValue.deviceNames?[address.uppercased()] ?? snapshot?.name(for: address) ?? "Saved Mac") + deviceStatus(address)).tag(address)
+                        }
+                    }
+                }
+                Text("Assign each monitor input to its Mac’s Bluetooth identity. Split layouts wake both assigned Macs. The ESP32 web page helps identify each device. OpenDDPM must be running on an awake Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let message { StatusBanner(message: message, isError: true) }
+                if settings.wrappedValue.enabled, let warning = store.transition.wakeWarning { StatusBanner(message: "Wake: " + warning, isError: true) }
+            }
+            .disabled(!settings.wrappedValue.enabled)
+        }
+        .task(id: "\(settings.wrappedValue.enabled):\(settings.wrappedValue.endpoint)") {
+            message = nil
+            guard settings.wrappedValue.enabled else { return }
+            snapshot = nil
+            while !Task.isCancelled {
+                await refreshDevices()
+                do { try await Task.sleep(nanoseconds: 3_000_000_000) }
+                catch { break }
+            }
+        }
+    }
+    private func deviceStatus(_ address: String) -> String {
+        guard settings.wrappedValue.enabled else { return "" }
+        guard message == nil, let snapshot else { return " · Status unknown" }
+        guard let device = snapshot.devices.first(where: { $0.address.caseInsensitiveCompare(address) == .orderedSame }) else { return " · Disconnected" }
+        return device.ready ? " · Ready" : " · Connected, HID not ready"
+    }
+    @MainActor private func refreshDevices() async {
+        guard settings.wrappedValue.enabled, !loading else { return }
+        loading = true
+        defer { loading = false }
+        let configuration = settings.wrappedValue
+        do {
+            let result = try await WakeClient().status(configuration)
+            guard !Task.isCancelled, settings.wrappedValue.enabled, settings.wrappedValue.endpoint == configuration.endpoint else { return }
+            snapshot = result; message = nil
+            var updated = settings.wrappedValue
+            var names = updated.deviceNames ?? [:]
+            for address in result.paired + result.devices.map(\.address) {
+                let name = result.name(for: address)
+                if name != "Unnamed Mac" { names[address.uppercased()] = name }
+            }
+            if !names.isEmpty, names != updated.deviceNames {
+                updated.deviceNames = names; settings.wrappedValue = updated
+            }
+        } catch {
+            guard !Task.isCancelled, settings.wrappedValue.enabled, settings.wrappedValue.endpoint == configuration.endpoint else { return }
+            snapshot = nil; message = error.localizedDescription
+        }
     }
 }
 
@@ -226,6 +319,7 @@ private struct SetupView: View {
                 Text("Follow the cable from this Mac to the monitor. Detection is a suggestion. Confirming the input does not switch your display.")
             }
             .disabled(store.busy)
+            WakeSetupView(store: store)
             Section {
                 Toggle("Keep this Mac visible", isOn: $store.configuration.keepLocalVisible)
             } footer: {
