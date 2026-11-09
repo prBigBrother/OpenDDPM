@@ -12,6 +12,15 @@ struct TransitionState: Codable {
     var error: String?
     var wakeWarning: String?
     var elapsed: Double?
+
+    func previousPreset(in configuration: AppConfiguration) -> DisplayPreset? {
+        let candidates = configuration.presets.filter {
+            $0.id != verifiedPresetID && (!configuration.keepLocalVisible || $0.includes(configuration.localInput))
+        }
+        // History is intentionally session-local. After launch (or deletion of
+        // the recorded preset), use configuration order to choose an alternative.
+        return candidates.first { $0.id == previousPresetID } ?? candidates.first
+    }
 }
 
 struct RequestReceipt: Codable {
@@ -38,6 +47,7 @@ final class PresetCoordinator {
     private var readingInBackground = false
     private var worker: Task<Void, Never>?
     private var unavailableReason: String?
+    var availabilityProvider: (() -> String?)?
     private var wakeSuppressedByPowerOff = false
     var wakeConfigurationProvider: (() -> WakeConfiguration?)?
     var beforeTransition: (() async -> Void)?
@@ -46,7 +56,11 @@ final class PresetCoordinator {
     init(engine: any MonitorControlling, journal: TransitionJournal = .standard) { self.engine = engine; self.journal = journal }
     @discardableResult
     func submit(_ preset: DisplayPreset, configuration: AppConfiguration) throws -> UUID {
-        if let reason = unavailableReason { throw ControlError.message(reason) }
+        reconcileAvailability()
+        if let reason = unavailableReason {
+            journal.record("request-rejected", fields: ["presetID": preset.id.uuidString, "reason": reason])
+            throw ControlError.message(reason)
+        }
         try configuration.validate(); try preset.validate()
         guard configuration.inputConfirmed, !configuration.monitorSerial.isEmpty else { throw ControlError.message("Complete monitor setup first.") }
         guard !configuration.keepLocalVisible || preset.includes(configuration.localInput) else { throw ControlError.message("This preset hides this Mac's \(configuration.localInput.title) input.") }
@@ -64,12 +78,14 @@ final class PresetCoordinator {
         return request.id
     }
     func refresh(configuration: AppConfiguration, quietly: Bool = false) {
+        reconcileAvailability()
         guard unavailableReason == nil else { return }
         refreshConfiguration = (configuration, quietly)
         if worker == nil { readingInBackground = quietly }
         startWorker(); onChange?()
     }
     func setPower(_ on: Bool, configuration: AppConfiguration) async throws {
+        reconcileAvailability()
         if let reason = unavailableReason { throw ControlError.message(reason) }
         guard !configuration.monitorSerial.isEmpty else { throw ControlError.message("Monitor serial is missing.") }
         let serial = configuration.monitorSerial
@@ -93,7 +109,9 @@ final class PresetCoordinator {
         refresh(configuration: configuration, quietly: true)
     }
     func setAvailability(_ reason: String?) {
+        guard reason != unavailableReason else { return }
         unavailableReason = reason
+        journal.record(reason == nil ? "session-available" : "session-unavailable", fields: ["reason": reason ?? ""])
         if let reason {
             if let request = desired {
                 finish(request.id, phase: "failed", error: reason)
@@ -104,6 +122,11 @@ final class PresetCoordinator {
             state.progress = reason
         }
         onChange?()
+    }
+    private func reconcileAvailability() {
+        // Notifications can be lost while suspended. Read the live session before
+        // every entry point, including requests from CLI, URLs and hotkeys.
+        if let availabilityProvider { setAvailability(availabilityProvider()) }
     }
     private func wake(_ preset: DisplayPreset, configuration: AppConfiguration) async {
         guard !wakeSuppressedByPowerOff else { return }

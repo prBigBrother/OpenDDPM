@@ -31,6 +31,12 @@ and queued edits, and consolidates preset access in the menu bar and Settings.
   Reopening the application opens Settings.
 - Preserve existing presets, their hotkeys, monitor/input settings and
   HomeKit configuration. The obsolete remote shortcut is ignored on load.
+- Recover control after a missed unlock notification by checking the live
+  console session before preset, status and power requests. Locked or inactive
+  sessions still reject commands.
+- Make Previous preset usable after restart: prefer recorded history, then
+  select another allowed preset in configuration order. With two presets,
+  the action switches between them.
 
 ## Bluetooth wake and builds
 

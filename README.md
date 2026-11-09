@@ -16,7 +16,7 @@ Picture-in-Picture layout and assigns each video source to the correct region.
 - Optional ESP32 Bluetooth wake support with per-input Mac assignments.
 - Latest selection wins: change your target while switching without overlapping monitor commands.
 - Adaptive readiness checks, a bounded transition deadline, and a local timing journal.
-- Previous verified preset and explicit retry verification.
+- Previous preset with a startup fallback and explicit retry verification.
 - Apple Shortcuts URLs and authenticated loopback automation API.
 - Optional Apple Home monitor with presets as inputs, connection controls and pairing QR codes.
 - Native SwiftUI settings sidebar, grouped forms, and a preset list with drag reordering.
@@ -84,10 +84,19 @@ calls share a 25-second transition deadline. Monitor firmware and macOS display
 rediscovery still determine the physical switching time.
 
 The app distinguishes selected, applying, verified and unverified states.
-A hidden Mac input is explicitly unverified. **Previous preset** returns to the
-last confirmed preset when the control channel is available. The local journal
-at `~/Library/Logs/OpenDDPM/transitions.jsonl` records request IDs, the write plan,
-I/O timings and readback; it rotates at 2 MB.
+A hidden Mac input is explicitly unverified. **Previous preset** prefers the
+previous confirmed preset. After launch, or if that preset was deleted or is now
+blocked, it selects the first other allowed preset in configuration order. With
+two presets it toggles between them; before the first readback it selects the
+first allowed preset. Presets that would hide this Mac are skipped while
+**Keep this Mac visible** is enabled.
+
+Preset commands and status refreshes check the live console session, so a missed
+unlock notification does not leave control blocked until a restart. Commands
+remain blocked while the Mac is asleep, locked, or in an inactive session.
+The local journal at `~/Library/Logs/OpenDDPM/transitions.jsonl` records request
+IDs, the write plan, I/O timings, readback, session availability changes and
+requests rejected because the session is unavailable; it rotates at 2 MB.
 
 If you turn off **Keep this Mac visible**, an excluding preset prepares all writes
 while retaining the local input, then hides this Mac with its final write. It
